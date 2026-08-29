@@ -32,9 +32,9 @@
 - Consumes: empty GitHub repository `Caio-Augusto-Paiva/Hair-Salon` and the local specification/assets.
 - Produces: `main` baseline commit and ignored `.worktrees/` directory.
 
-- [ ] Initialize Git on branch `main`, add the GitHub remote and verify `.worktrees/` is ignored.
-- [ ] Commit the specification, source images, ignore rules and this plan as the baseline.
-- [ ] Create worktree branch `phase-0-foundation` under `.worktrees/phase-0-foundation`.
+- [x] Initialize Git on branch `main`, add the GitHub remote and verify `.worktrees/` is ignored.
+- [x] Commit the specification, source images, ignore rules and this plan as the baseline.
+- [x] Create worktree branch `phase-0-foundation` under `.worktrees/phase-0-foundation`.
 
 ### Task 2: Next.js application scaffold
 
@@ -50,9 +50,9 @@
 - Consumes: Node.js/npm and Next.js App Router conventions.
 - Produces: commands `npm run dev`, `npm run lint` and `npm run build` from `apps/web`.
 
-- [ ] Generate the Next.js application with JavaScript, App Router, `src/`, Tailwind, ESLint and alias `@/*`.
-- [ ] Run `npm run lint` and record the exit status.
-- [ ] Run `npm run build` and record the exit status.
+- [x] Generate the Next.js application with JavaScript, App Router, `src/`, Tailwind, ESLint and alias `@/*`.
+- [x] Run `npm run lint` and record the exit status.
+- [x] Run `npm run build` and record the exit status.
 
 ### Task 3: Project assets and Codex operating contract
 
@@ -67,10 +67,10 @@
 - Consumes: agent workflow from specification section 11 and supplied logo/portfolio files.
 - Produces: stable instructions discoverable by Codex, documented setup and public image paths.
 
-- [ ] Copy the supplied logo and all twelve portfolio images into their specified public directories without renaming them.
-- [ ] Create `.env.example` with `DATABASE_URL`, `AUTH_SECRET`, Google OAuth/Calendar, email and WhatsApp variable names but no values.
-- [ ] Create `AGENTS.md` defining the architect, front-end, back-end and database scopes, required skills, shared-file policy and verification gates.
-- [ ] Create `README.md` with prerequisites, install, development, lint, build, environment and Vercel root-directory instructions.
+- [x] Copy the supplied logo and all twelve portfolio images into their specified public directories without renaming them.
+- [x] Create `.env.example` with `DATABASE_URL`, `AUTH_SECRET`, Google OAuth/Calendar, email and WhatsApp variable names but no values.
+- [x] Create `AGENTS.md` defining the architect, front-end, back-end and database scopes, required skills, shared-file policy and verification gates.
+- [x] Create `README.md` with prerequisites, install, development, lint, build, environment and Vercel root-directory instructions.
 
 ### Task 4: Foundation verification
 
@@ -83,9 +83,9 @@
 - Consumes: all Phase 0 artifacts.
 - Produces: evidence that the foundation installs, lints and builds and that all required source assets exist.
 
-- [ ] Run `npm install` in `apps/web` from the worktree.
-- [ ] Run the full `npm run lint` command and require exit code 0.
-- [ ] Run the full `npm run build` command and require exit code 0.
-- [ ] Verify one logo plus twelve portfolio images are present under `apps/web/public/images`.
-- [ ] Review `git status --short` and `git diff --check` before committing the Phase 0 branch.
-- [ ] Commit the verified foundation on `phase-0-foundation` and present branch-integration options.
+- [x] Run `npm install` in `apps/web` from the worktree.
+- [x] Run the full `npm run lint` command and require exit code 0.
+- [x] Run the full `npm run build` command and require exit code 0.
+- [x] Verify one logo plus twelve portfolio images are present under `apps/web/public/images`.
+- [x] Review `git status --short` and `git diff --check` before committing the Phase 0 branch.
+- [x] Commit the verified foundation on `phase-0-foundation` and present branch-integration options.
