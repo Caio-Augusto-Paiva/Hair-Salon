@@ -2,6 +2,7 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +12,10 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "next typegen && tsc --noEmit --project jsconfig.json"
+    "typecheck": "next typegen && tsc --noEmit --project jsconfig.json",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --conditions react-server src/db/migrate.js",
+    "db:check": "drizzle-kit check"
   },
   "dependencies": {
     "date-fns": "^4.4.0",
@@ -30,6 +34,7 @@
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.6",
     "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitest/coverage-v8": "^4.1.11",

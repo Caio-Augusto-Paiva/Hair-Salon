@@ -1,0 +1,62 @@
+import { describe, expect, it, vi } from "vitest";
+
+// `server-only` is a compile-time boundary and intentionally has no runtime
+// behavior to exercise in this unit test.
+vi.mock("server-only", () => ({}));
+
+describe("migration runner", () => {
+  it("runs the Drizzle migrator and closes its isolated pool after success", async () => {
+    /** @type {Array<any>} */
+    const calls = [];
+    const pool = {
+      end: async () => {
+        calls.push("end");
+      },
+    };
+    const database = { name: "database" };
+
+    const { runMigrations } = await import("./migrate.js");
+    await runMigrations("postgresql://example.test/proveras", {
+      createPool: (/** @type {string} */ connectionString, /** @type {any} */ options) => {
+        calls.push(["createPool", connectionString, options]);
+        return pool;
+      },
+      createDrizzle: (/** @type {any} */ createdPool) => {
+        calls.push(["createDrizzle", createdPool]);
+        return database;
+      },
+      migrator: async (/** @type {any} */ createdDatabase, /** @type {any} */ options) => {
+        calls.push(["migrator", createdDatabase, options]);
+      },
+    });
+
+    expect(calls).toEqual([
+      ["createPool", "postgresql://example.test/proveras", undefined],
+      ["createDrizzle", pool],
+      ["migrator", database, { migrationsFolder: "drizzle" }],
+      "end",
+    ]);
+  });
+
+  it("closes its isolated pool and rethrows when migration fails", async () => {
+    let ended = false;
+    const pool = {
+      end: async () => {
+        ended = true;
+      },
+    };
+    const migrationError = new Error("migration failed");
+    const { runMigrations } = await import("./migrate.js");
+
+    await expect(
+      runMigrations("postgresql://example.test/proveras", {
+        createPool: () => pool,
+        createDrizzle: () => ({ name: "database" }),
+        migrator: async () => {
+          throw migrationError;
+        },
+      }),
+    ).rejects.toBe(migrationError);
+    expect(ended).toBe(true);
+  });
+});
