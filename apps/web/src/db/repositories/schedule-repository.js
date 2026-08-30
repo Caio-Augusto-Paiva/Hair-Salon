@@ -9,13 +9,16 @@ function rowsOf(result) {
 }
 
 function assertTransaction(transaction) {
-  if (typeof transaction?.query === "function" && typeof transaction?.connect === "function") {
-    throw new TypeError("A transaction-bound client is required; pg Pool cannot be used");
+  const hasQuery = typeof transaction?.query === "function";
+  const hasConnect = typeof transaction?.connect === "function";
+  const hasRelease = typeof transaction?.release === "function";
+  if (hasQuery && hasConnect && !hasRelease) {
+    throw new TypeError("A transaction-bound client is required; pg Pool or standalone pg.Client cannot be used");
   }
   if (
     !(
       typeof transaction?.execute === "function"
-      || (typeof transaction?.query === "function" && typeof transaction?.release === "function")
+      || (hasQuery && hasRelease)
     )
   ) {
     throw new TypeError("A transaction-bound PostgreSQL client is required");
@@ -75,7 +78,10 @@ export async function insertActiveScheduleEntry(
  * Cancel an appointment and its collision row within the caller's
  * transaction. Client cancellation claims one credit; employee and admin
  * cancellation intentionally do not. Authorization is checked against the
- * persisted actor role and ownership, not just caller-provided labels.
+ * persisted active actor role and assignment, not just caller-provided labels.
+ * A standalone pg.Client is intentionally not accepted because it has no
+ * transaction-bound release lifecycle; callers must pass a PoolClient or
+ * Drizzle transaction.
  */
 export async function cancelScheduleEntry(
   transaction,

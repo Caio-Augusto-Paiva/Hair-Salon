@@ -365,7 +365,7 @@ describe("real PostgreSQL cancellation credits", () => {
         [[suspendedClientAppointment, deletedAdminAppointment, inactiveEmployeeAppointment]],
       );
       expect(appointments.rows.every((row) => row.status === "CONFIRMED")).toBe(true);
-      const renewals = await listCancellationCreditRenewals(pool, { clientId });
+      const renewals = await readRenewals(pool, listCancellationCreditRenewals, clientId);
       expect(renewals).toHaveLength(3);
       expect(renewals.every((value) => value <= new Date("2040-05-01T07:00:00.000Z"))).toBe(true);
     } finally {

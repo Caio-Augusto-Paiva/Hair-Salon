@@ -62,15 +62,35 @@ describe("schedule repository boundaries", () => {
     })).rejects.toThrow(/transaction-bound.*Pool/u);
   });
 
+  it("accepts a PoolClient shape even when its client exposes connect", async () => {
+    const poolClientLike = {
+      query: async () => ({ rows: [{ id: "entry-id", status: "ACTIVE" }] }),
+      connect: async () => ({}),
+      release: () => {},
+    };
+    const { insertActiveScheduleEntry } = await import("./schedule-repository.js");
+
+    await expect(insertActiveScheduleEntry(poolClientLike, {
+      employeeId: "employee-id",
+      startsAt: "2040-07-01T10:00:00.000Z",
+      endsAt: "2040-07-01T11:00:00.000Z",
+      kind: "APPOINTMENT",
+    })).resolves.toMatchObject({ id: "entry-id" });
+  });
+
   it.each([
     ["CLIENT", "SUSPENDED", false],
     ["CLIENT", "DELETED", false],
     ["EMPLOYEE", "ACTIVE", false],
+    ["EMPLOYEE", "SUSPENDED", true],
     ["ADMIN", "DELETED", false],
   ])("denies cancellation unless actor and assignment are active (%s/%s)", async (actorRole, status, isAssignedEmployee) => {
+    const actorId = actorRole === "CLIENT" ? "client-id" : "actor-id";
+    const queries = [];
     const transaction = {
       release: () => {},
       query: async (text) => {
+        queries.push(text);
         if (text.includes("from appointments")) {
           return { rows: [{ id: "appointment-id", schedule_entry_id: "entry-id", client_id: "client-id", employee_id: "employee-id" }] };
         }
@@ -81,8 +101,11 @@ describe("schedule repository boundaries", () => {
 
     await expect(cancelScheduleEntry(transaction, {
       appointmentId: "appointment-id",
-      actorId: "actor-id",
+      actorId,
       actorRole,
     })).resolves.toMatchObject({ ok: false, code: "FORBIDDEN" });
+    expect(queries).toHaveLength(2);
+    expect(queries.some((text) => text.includes("update appointments") || text.includes("update schedule_entries"))).toBe(false);
+    expect(queries.some((text) => text.includes("cancellation_credits"))).toBe(false);
   });
 });

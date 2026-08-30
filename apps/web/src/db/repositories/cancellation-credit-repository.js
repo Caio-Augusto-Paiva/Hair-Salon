@@ -8,13 +8,16 @@ function rowsOf(result) {
 }
 
 function assertTransaction(transaction) {
-  if (typeof transaction?.query === "function" && typeof transaction?.connect === "function") {
-    throw new TypeError("A transaction-bound client is required; pg Pool cannot be used");
+  const hasQuery = typeof transaction?.query === "function";
+  const hasConnect = typeof transaction?.connect === "function";
+  const hasRelease = typeof transaction?.release === "function";
+  if (hasQuery && hasConnect && !hasRelease) {
+    throw new TypeError("A transaction-bound client is required; pg Pool or standalone pg.Client cannot be used");
   }
   if (
     !(
       typeof transaction?.execute === "function"
-      || (typeof transaction?.query === "function" && typeof transaction?.release === "function")
+      || (hasQuery && hasRelease)
     )
   ) {
     throw new TypeError("A transaction-bound PostgreSQL client is required");

@@ -48,16 +48,35 @@ async function insertBlockDetail(client, entry) {
   );
 }
 
-async function withBarrier() {
+function withBarrier(timeoutMs = 5_000) {
   let ready = 0;
-  let release;
+  let settled = false;
+  let failure;
+  let resolveOpened;
+  let timeout;
   const opened = new Promise((resolve) => {
-    release = resolve;
+    resolveOpened = resolve;
   });
-  return async () => {
-    ready += 1;
-    if (ready === 2) release();
-    await opened;
+  const finish = (error = null) => {
+    if (settled) return;
+    settled = true;
+    failure = error;
+    clearTimeout(timeout);
+    resolveOpened();
+  };
+  timeout = setTimeout(
+    () => finish(new Error("Concurrent transaction barrier timed out")),
+    timeoutMs,
+  );
+  return {
+    wait: async () => {
+      if (settled && failure) throw failure;
+      ready += 1;
+      if (ready === 2) finish();
+      await opened;
+      if (failure) throw failure;
+    },
+    abort: (error) => finish(error),
   };
 }
 
@@ -71,23 +90,36 @@ async function rollbackQuietly(client) {
 
 async function runConcurrent(pool, operation) {
   const left = await pool.connect();
-  const right = await pool.connect();
-  const barrier = await withBarrier();
+  let right;
+  try {
+    right = await pool.connect();
+  } catch (error) {
+    left.release();
+    throw error;
+  }
+  const barrier = withBarrier();
   const run = async (client, index) => {
     let transactionOpen = false;
+    let barrierReached = false;
     try {
       await client.query("begin");
       transactionOpen = true;
-      await barrier();
+      barrierReached = true;
+      await barrier.wait();
       const result = await operation(client, index);
       transactionOpen = false;
       return result;
+    } catch (error) {
+      if (!barrierReached) barrier.abort(error);
+      throw error;
     } finally {
       if (transactionOpen) await rollbackQuietly(client);
       client.release();
     }
   };
-  return Promise.allSettled([run(left, 0), run(right, 1)]);
+  const results = await Promise.allSettled([run(left, 0), run(right, 1)]);
+  barrier.abort(new Error("Concurrent transaction participants finished"));
+  return results;
 }
 
 describe("real PostgreSQL scheduling concurrency", () => {
