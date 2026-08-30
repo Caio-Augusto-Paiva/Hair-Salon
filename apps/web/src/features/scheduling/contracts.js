@@ -12,12 +12,20 @@ export const availabilityQuerySchema = z.strictObject({
   timeZone: z.literal(BUSINESS_TIME_ZONE),
 });
 
-const publicSlotSchema = z.strictObject({
-  startsAt: isoInstantSchema,
-  endsAt: isoInstantSchema,
-  available: z.boolean(),
-  unavailableLabel: z.literal("Horário indisponível"),
-});
+const publicSlotSchema = z.discriminatedUnion("available", [
+  z.strictObject({
+    startsAt: isoInstantSchema,
+    endsAt: isoInstantSchema,
+    available: z.literal(true),
+    unavailableLabel: z.null(),
+  }),
+  z.strictObject({
+    startsAt: isoInstantSchema,
+    endsAt: isoInstantSchema,
+    available: z.literal(false),
+    unavailableLabel: z.literal("Horário indisponível"),
+  }),
+]);
 
 export const publicAvailabilitySchema = z.strictObject({
   employeeId: identifierSchema,

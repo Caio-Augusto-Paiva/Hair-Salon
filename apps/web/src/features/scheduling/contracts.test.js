@@ -25,6 +25,12 @@ const validSlot = {
   unavailableLabel: "Horário indisponível",
 };
 
+const validAvailableSlot = {
+  ...validSlot,
+  available: true,
+  unavailableLabel: null,
+};
+
 const validPublicAvailability = {
   ...validAvailabilityQuery,
   slots: [validSlot],
@@ -41,6 +47,51 @@ const validBooking = {
 describe("scheduling contracts", () => {
   it("accepts a public unavailable slot without customer data", () => {
     expect(() => publicAvailabilitySchema.parse(validPublicAvailability)).not.toThrow();
+  });
+
+  it("accepts a public available slot with a null unavailable label", () => {
+    expect(() =>
+      publicAvailabilitySchema.parse({
+        ...validPublicAvailability,
+        slots: [validAvailableSlot],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects text in the unavailable label of an available slot", () => {
+    expect(() =>
+      publicAvailabilitySchema.parse({
+        ...validPublicAvailability,
+        slots: [{ ...validAvailableSlot, unavailableLabel: "Horário indisponível" }],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts the exact unavailable label of an unavailable slot", () => {
+    expect(() =>
+      publicAvailabilitySchema.parse({
+        ...validPublicAvailability,
+        slots: [validSlot],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a null unavailable label of an unavailable slot", () => {
+    expect(() =>
+      publicAvailabilitySchema.parse({
+        ...validPublicAvailability,
+        slots: [{ ...validSlot, unavailableLabel: null }],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a different unavailable label of an unavailable slot", () => {
+    expect(() =>
+      publicAvailabilitySchema.parse({
+        ...validPublicAvailability,
+        slots: [{ ...validSlot, unavailableLabel: "Indisponível" }],
+      }),
+    ).toThrow();
   });
 
   it("rejects an invalid employee UUID in an availability query", () => {
