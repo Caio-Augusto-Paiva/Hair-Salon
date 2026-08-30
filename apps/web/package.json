@@ -15,7 +15,8 @@
     "typecheck": "next typegen && tsc --noEmit --project jsconfig.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --conditions react-server src/db/migrate.js",
-    "db:check": "drizzle-kit check"
+    "db:check": "drizzle-kit check",
+    "db:seed:development": "node --conditions react-server src/db/seeds/development.js"
   },
   "dependencies": {
     "date-fns": "^4.4.0",
