@@ -72,14 +72,32 @@ describe("migration runner", () => {
     };
     const { startTestDatabase } = await import("./test-database.js");
 
-    await expect(
-      startTestDatabase({
-        startContainer: async () => container,
-        createPool: () => {
-          throw poolError;
-        },
-      }),
-    ).rejects.toBe(poolError);
-    expect(stopped).toBe(true);
+    const originalTestDatabaseUrl = process.env.TEST_DATABASE_URL;
+    const originalDatabaseTestUrl = process.env.DATABASE_TEST_URL;
+    try {
+      delete process.env.TEST_DATABASE_URL;
+      delete process.env.DATABASE_TEST_URL;
+
+      await expect(
+        startTestDatabase({
+          startContainer: async () => container,
+          createPool: () => {
+            throw poolError;
+          },
+        }),
+      ).rejects.toBe(poolError);
+      expect(stopped).toBe(true);
+    } finally {
+      if (originalTestDatabaseUrl === undefined) {
+        delete process.env.TEST_DATABASE_URL;
+      } else {
+        process.env.TEST_DATABASE_URL = originalTestDatabaseUrl;
+      }
+      if (originalDatabaseTestUrl === undefined) {
+        delete process.env.DATABASE_TEST_URL;
+      } else {
+        process.env.DATABASE_TEST_URL = originalDatabaseTestUrl;
+      }
+    }
   });
 });

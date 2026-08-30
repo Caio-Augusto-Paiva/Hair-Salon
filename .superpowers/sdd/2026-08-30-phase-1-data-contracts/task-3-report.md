@@ -208,3 +208,34 @@ Caused by: Error: Could not find a working container runtime strategy
 
 No integration GREEN claim is made until Docker or an explicit real test URL
 is available.
+
+## Review round 2 correction
+
+Review finding P1 identified that the cleanup regression test could inherit
+`TEST_DATABASE_URL` or `DATABASE_TEST_URL` from CI. In that case,
+`startTestDatabase` correctly prioritizes the explicit URL and bypasses the
+injected Testcontainers path, so the test would not prove container cleanup.
+
+The regression now saves both environment values, deletes both for the test,
+and restores each value (including the unset state) in `finally`. RED was
+reproduced before the correction with `TEST_DATABASE_URL` set: the test
+reported `expected false to be true` because the container was not used.
+Afterward, with both URLs set to CI-like values, the focused test passed:
+
+```text
+Test Files  1 passed (1)
+Tests       3 passed (3)
+```
+
+Final round-2 verification:
+
+- `npm run test:unit` — 5 files, 33 tests passed.
+- `npm run typecheck` — exit 0.
+- `npm run lint` — exit 0.
+- `npm run build` — exit 0.
+- `npm run test:integration -- src/db/migrations.integration.test.js` —
+  1 failed/0 skipped with the existing real-runtime blocker
+  `Could not find a working container runtime strategy`.
+
+The integration test remains real and unmocked; no integration GREEN claim is
+made.
