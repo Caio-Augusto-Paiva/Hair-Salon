@@ -32,6 +32,7 @@
 - Create: `apps/web/vitest.config.mjs`
 - Create: `apps/web/src/test/setup.js`
 - Create: `apps/web/src/test/smoke.test.js`
+- Create: `apps/web/src/lib/time/business-time.js`
 
 **Interfaces:**
 - Consumes: existing Next.js JavaScript application and npm lockfile.
@@ -54,11 +55,11 @@ Create `src/test/smoke.test.js`:
 
 ```js
 import { describe, expect, it } from "vitest";
-import { BUSINESS_TIME_ZONE } from "@/lib/time/constants";
+import { toBusinessDate } from "@/lib/time/business-time";
 
 describe("test foundation", () => {
-  it("uses the salon business time zone", () => {
-    expect(BUSINESS_TIME_ZONE).toBe("America/Sao_Paulo");
+  it("converts an instant across the salon date boundary", () => {
+    expect(toBusinessDate("2026-09-01T02:30:00.000Z")).toBe("2026-08-31");
   });
 });
 ```
@@ -83,14 +84,25 @@ Set `allowJs`, `checkJs`, `noEmit`, `strict`, `module`, `moduleResolution`, JSX,
 npm run test:unit -- src/test/smoke.test.js
 ```
 
-Expected: FAIL because `@/lib/time/constants` does not exist.
+Expected: FAIL because `@/lib/time/business-time` does not exist.
 
 - [ ] **Step 4: Write the minimal implementation and verify GREEN**
 
-Create `src/lib/time/constants.js`:
+Create `src/lib/time/business-time.js` with a formatter fixed to `America/Sao_Paulo` and an exported `toBusinessDate(instant)` function that returns an ISO calendar date. Invalid instants must throw `RangeError` rather than returning an invalid string.
 
 ```js
 export const BUSINESS_TIME_ZONE = "America/Sao_Paulo";
+
+export function toBusinessDate(instant) {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) throw new RangeError("Invalid instant");
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
 ```
 
 Run the smoke test, `npm run typecheck`, `npm run lint`, and `npm run build`. Expected: all exit 0.
@@ -98,7 +110,7 @@ Run the smoke test, `npm run typecheck`, `npm run lint`, and `npm run build`. Ex
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add apps/web/package.json apps/web/package-lock.json apps/web/jsconfig.json apps/web/vitest.config.mjs apps/web/src/test apps/web/src/lib/time/constants.js
+git add apps/web/package.json apps/web/package-lock.json apps/web/jsconfig.json apps/web/vitest.config.mjs apps/web/src/test apps/web/src/lib/time/business-time.js
 git commit -m "test(web): establish JavaScript verification harness"
 ```
 
@@ -194,6 +206,8 @@ git commit -m "feat(web): freeze scheduling contracts"
 - Create: `apps/web/src/db/migrate.js`
 - Create: `apps/web/src/db/test-database.js`
 - Create: `apps/web/src/db/migrations.integration.test.js`
+- Create: `apps/web/drizzle/0000_extensions.sql`
+- Create: `apps/web/drizzle/meta/_journal.json`
 - Modify: `apps/web/package.json`
 
 **Interfaces:**
@@ -202,7 +216,7 @@ git commit -m "feat(web): freeze scheduling contracts"
 
 - [ ] **Step 1: Write the failing real-database migration test**
 
-The integration test starts `postgres:17-alpine`, calls `runMigrations`, queries `pg_extension` for `btree_gist`, and queries `information_schema.tables` for all Phase 1 tables. It must fail because database modules and migrations do not exist.
+The integration test starts `postgres:17-alpine`, calls `runMigrations`, queries `pg_extension` for `btree_gist`, and queries Drizzle's migration journal. It must fail because database modules and migrations do not exist.
 
 - [ ] **Step 2: Verify RED against a real PostgreSQL process**
 
@@ -216,7 +230,7 @@ Expected: the container starts, then the test fails on the missing migration API
 
 - [ ] **Step 3: Implement connection and migration boundaries**
 
-Create a bounded `pg.Pool` at module scope, attach Drizzle to it, and prevent accidental browser imports with `server-only`. `runMigrations` constructs an isolated pool, calls Drizzle's migrator with `migrationsFolder: "drizzle"`, and closes the pool in `finally`.
+Create a bounded `pg.Pool` at module scope, attach Drizzle to it, and prevent accidental browser imports with `server-only`. `runMigrations` constructs an isolated pool, calls Drizzle's migrator with `migrationsFolder: "drizzle"`, and closes the pool in `finally`. The first migration enables `btree_gist` and `pgcrypto`; the journal records that migration.
 
 Add scripts:
 
@@ -228,14 +242,14 @@ Add scripts:
 }
 ```
 
-- [ ] **Step 4: Keep RED until the schema task**
+- [ ] **Step 4: Verify GREEN for migration infrastructure**
 
-Re-run the focused integration test. Expected: migration runner loads, then FAIL because the expected schema is absent. This is the intended handoff to Task 4.
+Re-run the focused integration test twice against the same database. Expected: both runs pass, required extensions exist, and the migration is applied once.
 
 - [ ] **Step 5: Commit the infrastructure**
 
 ```powershell
-git add apps/web/drizzle.config.js apps/web/src/db apps/web/package.json apps/web/package-lock.json
+git add apps/web/drizzle.config.js apps/web/src/db apps/web/drizzle apps/web/package.json apps/web/package-lock.json
 git commit -m "feat(db): add PostgreSQL migration infrastructure"
 ```
 
@@ -250,8 +264,8 @@ git commit -m "feat(db): add PostgreSQL migration infrastructure"
 - Create: `apps/web/src/db/schema/scheduling.js`
 - Create: `apps/web/src/db/schema/operations.js`
 - Create: `apps/web/src/db/schema/index.js`
-- Create: `apps/web/drizzle/0000_proveras_initial.sql`
-- Create: `apps/web/drizzle/meta/_journal.json`
+- Create: `apps/web/drizzle/0001_proveras_initial.sql`
+- Modify: `apps/web/drizzle/meta/_journal.json`
 - Modify: `apps/web/src/db/migrations.integration.test.js`
 
 **Interfaces:**
