@@ -1,0 +1,71 @@
+// @ts-nocheck
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
+describe("cancellation credit repository boundaries", () => {
+  it("locks eligible rows in slot order and writes a database-calculated 30-day renewal", async () => {
+    const calls = [];
+    const transaction = {
+      query: async (text, values) => {
+        calls.push([text, values]);
+        if (text.includes("select id, slot_number")) {
+          return { rows: [{ id: "credit-1", slot_number: 1 }] };
+        }
+        return {
+          rows: [{
+            id: "credit-1",
+            slot_number: 1,
+            available_at: new Date("2040-06-01T00:00:00.000Z"),
+            last_used_at: new Date("2040-05-02T00:00:00.000Z"),
+          }],
+        };
+      },
+    };
+    const { claimCancellationCredit } = await import("./cancellation-credit-repository.js");
+    const result = await claimCancellationCredit(transaction, {
+      clientId: "client-id",
+      appointmentId: "appointment-id",
+      now: new Date("2040-05-02T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ ok: true, slotNumber: 1, creditId: "credit-1" });
+    expect(calls[0][0]).toMatch(/order by slot_number[\s\S]*for update/u);
+    expect(calls[1][0]).toContain("interval '30 days'");
+    expect(calls[1][1]).toEqual([
+      "credit-1",
+      new Date("2040-05-02T00:00:00.000Z"),
+      "appointment-id",
+    ]);
+  });
+
+  it("returns every renewal instant without exposing client records when exhausted", async () => {
+    const transaction = {
+      query: async (text) => {
+        if (text.includes("select id, slot_number")) return { rows: [] };
+        return {
+          rows: [
+            { available_at: new Date("2040-06-01T00:00:00.000Z") },
+            { available_at: new Date("2040-06-02T00:00:00.000Z") },
+            { available_at: new Date("2040-06-03T00:00:00.000Z") },
+          ],
+        };
+      },
+    };
+    const { claimCancellationCredit } = await import("./cancellation-credit-repository.js");
+    const result = await claimCancellationCredit(transaction, {
+      clientId: "client-id",
+      now: new Date("2040-05-02T00:00:00.000Z"),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "NO_CANCELLATION_CREDIT",
+      renewalInstants: [
+        new Date("2040-06-01T00:00:00.000Z"),
+        new Date("2040-06-02T00:00:00.000Z"),
+        new Date("2040-06-03T00:00:00.000Z"),
+      ],
+    });
+  });
+});
