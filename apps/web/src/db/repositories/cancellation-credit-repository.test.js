@@ -7,6 +7,7 @@ describe("cancellation credit repository boundaries", () => {
   it("locks eligible rows in slot order and writes a database-calculated 30-day renewal", async () => {
     const calls = [];
     const transaction = {
+      release: () => {},
       query: async (text, values) => {
         calls.push([text, values]);
         if (text.includes("select id, slot_number")) {
@@ -31,7 +32,7 @@ describe("cancellation credit repository boundaries", () => {
 
     expect(result).toMatchObject({ ok: true, slotNumber: 1, creditId: "credit-1" });
     expect(calls[0][0]).toMatch(/order by slot_number[\s\S]*for update/u);
-    expect(calls[1][0]).toContain("interval '30 days'");
+    expect(calls[1][0]).toContain("$2::timestamptz + interval '30 days'");
     expect(calls[1][1]).toEqual([
       "credit-1",
       new Date("2040-05-02T00:00:00.000Z"),
@@ -41,6 +42,7 @@ describe("cancellation credit repository boundaries", () => {
 
   it("returns every renewal instant without exposing client records when exhausted", async () => {
     const transaction = {
+      release: () => {},
       query: async (text) => {
         if (text.includes("select id, slot_number")) return { rows: [] };
         return {
@@ -67,5 +69,13 @@ describe("cancellation credit repository boundaries", () => {
         new Date("2040-06-03T00:00:00.000Z"),
       ],
     });
+  });
+
+  it("rejects a pg Pool instead of querying outside a transaction", async () => {
+    const poolLike = { query: async () => ({ rows: [] }), connect: async () => ({}) };
+    const { claimCancellationCredit } = await import("./cancellation-credit-repository.js");
+
+    await expect(claimCancellationCredit(poolLike, { clientId: "client-id" }))
+      .rejects.toThrow(/transaction-bound.*Pool/u);
   });
 });

@@ -8,7 +8,22 @@ function rowsOf(result) {
   return result?.rows ?? result ?? [];
 }
 
+function assertTransaction(transaction) {
+  if (typeof transaction?.query === "function" && typeof transaction?.connect === "function") {
+    throw new TypeError("A transaction-bound client is required; pg Pool cannot be used");
+  }
+  if (
+    !(
+      typeof transaction?.execute === "function"
+      || (typeof transaction?.query === "function" && typeof transaction?.release === "function")
+    )
+  ) {
+    throw new TypeError("A transaction-bound PostgreSQL client is required");
+  }
+}
+
 async function query(transaction, text, values = []) {
+  assertTransaction(transaction);
   if (typeof transaction?.query === "function") {
     const result = await transaction.query(text, values);
     return rowsOf(result);
@@ -83,10 +98,10 @@ export async function cancelScheduleEntry(
 
   const [actor] = await query(
     transaction,
-    `select u.role,
+    `select u.role, u.status,
             exists (
               select 1 from employees e
-               where e.user_id = u.id and e.id = $2
+               where e.user_id = u.id and e.id = $2 and e.status = 'ACTIVE'
             ) as is_assigned_employee
        from users u
       where u.id = $1`,
@@ -94,7 +109,8 @@ export async function cancelScheduleEntry(
   );
   const persistedRole = actor?.role;
   const roleMatches = persistedRole === actorRole;
-  const authorized = roleMatches && (
+  const actorIsActive = actor?.status === "ACTIVE";
+  const authorized = roleMatches && actorIsActive && (
     (actorRole === "CLIENT" && actorId === appointment.client_id)
     || (actorRole === "EMPLOYEE" && actor.is_assigned_employee)
     || actorRole === "ADMIN"

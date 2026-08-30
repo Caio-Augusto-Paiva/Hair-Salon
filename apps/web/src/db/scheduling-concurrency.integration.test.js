@@ -61,19 +61,29 @@ async function withBarrier() {
   };
 }
 
+async function rollbackQuietly(client) {
+  try {
+    await client.query("rollback");
+  } catch {
+    // Preserve the original assertion/database error during cleanup.
+  }
+}
+
 async function runConcurrent(pool, operation) {
   const left = await pool.connect();
   const right = await pool.connect();
   const barrier = await withBarrier();
   const run = async (client, index) => {
+    let transactionOpen = false;
     try {
       await client.query("begin");
+      transactionOpen = true;
       await barrier();
-      return await operation(client, index);
-    } catch (error) {
-      await client.query("rollback");
-      throw error;
+      const result = await operation(client, index);
+      transactionOpen = false;
+      return result;
     } finally {
+      if (transactionOpen) await rollbackQuietly(client);
       client.release();
     }
   };
@@ -139,8 +149,12 @@ describe("real PostgreSQL scheduling concurrency", () => {
         });
         expect(touching.filter((result) => result.status === "fulfilled")).toHaveLength(2);
 
-        const otherEmployee = await seedPeople(pool, `other-${attempt}`);
-        const differentEmployee = await runConcurrent(pool, async (client) => {
+        const otherEmployees = [
+          await seedPeople(pool, `other-a-${attempt}`),
+          await seedPeople(pool, `other-b-${attempt}`),
+        ];
+        const differentEmployee = await runConcurrent(pool, async (client, index) => {
+          const otherEmployee = otherEmployees[index];
           const entry = await insertActiveScheduleEntry(client, {
             employeeId: otherEmployee.employeeId,
             startsAt: "2040-01-01T10:00:00.000Z",
@@ -174,8 +188,10 @@ describe("real PostgreSQL scheduling concurrency", () => {
         expect(block.some((result) => result.status === "rejected" && result.reason.code === "SLOT_UNAVAILABLE")).toBe(true);
 
         const cancelClient = await pool.connect();
+        let transactionOpen = false;
         try {
           await cancelClient.query("begin");
+          transactionOpen = true;
           const entry = await insertActiveScheduleEntry(cancelClient, {
             employeeId: people.employeeId,
             startsAt: "2040-01-01T19:00:00.000Z",
@@ -198,8 +214,10 @@ describe("real PostgreSQL scheduling concurrency", () => {
           });
           expect(cancelled.ok).toBe(true);
           await cancelClient.query("commit");
+          transactionOpen = false;
 
           await cancelClient.query("begin");
+          transactionOpen = true;
           const reused = await insertActiveScheduleEntry(cancelClient, {
             employeeId: people.employeeId,
             startsAt: "2040-01-01T19:00:00.000Z",
@@ -208,8 +226,10 @@ describe("real PostgreSQL scheduling concurrency", () => {
           });
           await insertAppointmentDetail(cancelClient, reused, people.clientId);
           await cancelClient.query("commit");
+          transactionOpen = false;
         } finally {
-          await cancelClient.release();
+          if (transactionOpen) await rollbackQuietly(cancelClient);
+          cancelClient.release();
         }
       }
     } finally {

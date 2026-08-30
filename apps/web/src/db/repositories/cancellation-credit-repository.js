@@ -7,11 +7,26 @@ function rowsOf(result) {
   return result?.rows ?? result ?? [];
 }
 
+function assertTransaction(transaction) {
+  if (typeof transaction?.query === "function" && typeof transaction?.connect === "function") {
+    throw new TypeError("A transaction-bound client is required; pg Pool cannot be used");
+  }
+  if (
+    !(
+      typeof transaction?.execute === "function"
+      || (typeof transaction?.query === "function" && typeof transaction?.release === "function")
+    )
+  ) {
+    throw new TypeError("A transaction-bound PostgreSQL client is required");
+  }
+}
+
 /**
  * Execute a parameterized statement against either a node-postgres client or
  * a Drizzle PostgreSQL transaction. The caller owns the transaction boundary.
  */
 async function query(transaction, text, values = []) {
+  assertTransaction(transaction);
   if (typeof transaction?.query === "function") {
     const result = await transaction.query(text, values);
     return rowsOf(result);
@@ -83,7 +98,7 @@ export async function claimCancellationCredit(
   const [updated] = await query(
     transaction,
     `update cancellation_credits
-        set available_at = $2 + interval '30 days',
+        set available_at = $2::timestamptz + interval '30 days',
             last_appointment_id = $3,
             last_used_at = $2,
             updated_at = $2
