@@ -36,13 +36,18 @@ export async function seedDevelopmentDatabase(database) {
         insert into users (name, email_normalized, role, status)
         values (${user.name}, ${user.email}, ${user.role}::user_role, 'ACTIVE'::user_status)
         on conflict (email_normalized) do nothing
-        returning id
+        returning id, role
       `);
       const rows = inserted.rows.length
         ? inserted
         : await transaction.execute(sql`
-            select id from users where email_normalized = ${user.email} limit 1
+            select id, role from users where email_normalized = ${user.email} limit 1
           `);
+      if (rows.rows[0].role !== user.role) {
+        throw new Error(
+          `Development seed fixture role conflict for ${user.email}: expected ${user.role}, found ${rows.rows[0].role}`,
+        );
+      }
       userIds.set(user.email, rows.rows[0].id);
     }
 
@@ -52,13 +57,16 @@ export async function seedDevelopmentDatabase(database) {
         insert into employees (user_id, display_name, specialty_summary, status)
         values (${userIds.get(user.email)}, ${user.name}, ${user.specialty}, 'ACTIVE'::employee_status)
         on conflict (user_id) do nothing
-        returning id
+        returning id, user_id
       `);
       const rows = inserted.rows.length
         ? inserted
         : await transaction.execute(sql`
-            select id from employees where user_id = ${userIds.get(user.email)} limit 1
+            select id, user_id from employees where user_id = ${userIds.get(user.email)} limit 1
           `);
+      if (rows.rows[0].user_id !== userIds.get(user.email)) {
+        throw new Error(`Development seed fixture employee conflict for ${user.email}`);
+      }
       employeeIds.push(rows.rows[0].id);
     }
 
@@ -68,18 +76,7 @@ export async function seedDevelopmentDatabase(database) {
         select id from services where name = ${service.name} limit 1
       `);
       const rows = existing.rows.length
-        ? await transaction.execute(sql`
-            update services
-               set category = ${service.category}::service_category,
-                   duration_minutes = ${service.durationMinutes},
-                   preparation_minutes = 0,
-                   price_cents = ${service.priceCents},
-                   price_verified_at = null,
-                   active = true,
-                   updated_at = now()
-             where id = ${existing.rows[0].id}
-             returning id
-          `)
+        ? existing
         : await transaction.execute(sql`
             insert into services
               (name, category, duration_minutes, preparation_minutes, price_cents, price_verified_at, active)

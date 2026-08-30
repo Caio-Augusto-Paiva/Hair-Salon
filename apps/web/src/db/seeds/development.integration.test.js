@@ -50,9 +50,11 @@ describe("privacy-safe development seed", () => {
     const database = { transaction: async () => { throw new Error("must not execute"); } };
     const previous = process.env.DEVELOPMENT_SEED_ENABLED;
     delete process.env.DEVELOPMENT_SEED_ENABLED;
-    await expect(seedDevelopmentDatabase(database)).rejects.toThrow("DEVELOPMENT_SEED_ENABLED=true");
-    if (previous === undefined) delete process.env.DEVELOPMENT_SEED_ENABLED;
-    else process.env.DEVELOPMENT_SEED_ENABLED = previous;
+    try {
+      await expect(seedDevelopmentDatabase(database)).rejects.toThrow("DEVELOPMENT_SEED_ENABLED=true");
+    } finally {
+      restoreSeedFlag(previous);
+    }
   });
 
   it("serializes concurrent runs without duplicate fixtures", async () => {
@@ -85,6 +87,72 @@ describe("privacy-safe development seed", () => {
     }
   });
 
+  it("aborts atomically when a reserved client email has an incompatible role", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { runMigrations } = await import("../migrate.js");
+      await runMigrations(testDatabase.connectionString);
+      await testDatabase.pool.query(`
+        insert into users (name, email_normalized, role)
+        values ('Reserved role fixture', 'cliente-01-demo@example.com', 'ADMIN')
+      `);
+      const database = drizzle(testDatabase.pool);
+      const previous = process.env.DEVELOPMENT_SEED_ENABLED;
+      process.env.DEVELOPMENT_SEED_ENABLED = "true";
+      try {
+        await expect(seedDevelopmentDatabase(database)).rejects.toThrow(
+          "Development seed fixture role conflict for cliente-01-demo@example.com: expected CLIENT, found ADMIN",
+        );
+      } finally {
+        restoreSeedFlag(previous);
+      }
+
+      const result = await testDatabase.pool.query(`
+        select
+          (select count(*)::int from users) as user_count,
+          (select count(*)::int from services) as service_count,
+          (select count(*)::int from employees) as employee_count,
+          (select count(*)::int from cancellation_credits
+            where client_id = (select id from users where email_normalized = 'cliente-01-demo@example.com')) as credit_count
+      `);
+      expect(result.rows[0]).toEqual({ user_count: 1, service_count: 0, employee_count: 0, credit_count: 0 });
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
+
+  it("aborts before creating an employee for an incompatible reserved employee role", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { runMigrations } = await import("../migrate.js");
+      await runMigrations(testDatabase.connectionString);
+      await testDatabase.pool.query(`
+        insert into users (name, email_normalized, role)
+        values ('Reserved employee role fixture', 'funcionaria-01-demo@example.com', 'CLIENT')
+      `);
+      const database = drizzle(testDatabase.pool);
+      const previous = process.env.DEVELOPMENT_SEED_ENABLED;
+      process.env.DEVELOPMENT_SEED_ENABLED = "true";
+      try {
+        await expect(seedDevelopmentDatabase(database)).rejects.toThrow(
+          "Development seed fixture role conflict for funcionaria-01-demo@example.com: expected EMPLOYEE, found CLIENT",
+        );
+      } finally {
+        restoreSeedFlag(previous);
+      }
+
+      const result = await testDatabase.pool.query(`
+        select
+          (select count(*)::int from services) as service_count,
+          (select count(*)::int from employees) as employee_count,
+          (select count(*)::int from cancellation_credits) as credit_count
+      `);
+      expect(result.rows[0]).toEqual({ service_count: 0, employee_count: 0, credit_count: 0 });
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
+
   it("fills missing fixtures without overwriting existing changes", async () => {
     const testDatabase = await startTestDatabase();
     try {
@@ -109,7 +177,7 @@ describe("privacy-safe development seed", () => {
         `);
         await testDatabase.pool.query(`
           update users
-             set name = 'Identidade preservada', role = 'ADMIN', status = 'SUSPENDED'
+             set name = 'Identidade preservada', status = 'SUSPENDED'
            where email_normalized = 'cliente-01-demo@example.com'
         `);
         await testDatabase.pool.query(`
@@ -160,7 +228,7 @@ describe("privacy-safe development seed", () => {
         portfolio_order: 99,
         portfolio_active: false,
         client_name: "Identidade preservada",
-        client_role: "ADMIN",
+        client_role: "CLIENT",
         client_status: "SUSPENDED",
         employee_display: "Profissional preservada",
         employee_status: "INACTIVE",
