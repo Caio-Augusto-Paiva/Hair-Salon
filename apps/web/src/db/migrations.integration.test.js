@@ -112,4 +112,157 @@ describe("PostgreSQL migration lifecycle", () => {
       await stopTestDatabase(testDatabase);
     }
   });
+
+  it("serializes concurrent appointment and block detail writes for one entry", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { connectionString, pool } = testDatabase;
+      const { runMigrations } = await import("./migrate.js");
+      await runMigrations(connectionString);
+
+      const employee = await pool.query(
+        `insert into users (name, email_normalized, role)
+         values ('Test Employee', 'employee@example.com', 'EMPLOYEE')
+         returning id`,
+      );
+      const client = await pool.query(
+        `insert into users (name, email_normalized, role)
+         values ('Test Client', 'client@example.com', 'CLIENT')
+         returning id`,
+      );
+      const employeeId = employee.rows[0].id;
+      const clientId = client.rows[0].id;
+      await pool.query(
+        `insert into employees (user_id, display_name, specialty_summary)
+         values ($1, 'Test Employee', 'Test')`,
+        [employeeId],
+      );
+
+      // The fixture is intentionally bare so both transactions can race to
+      // provide the one required detail row.
+      await pool.query(`alter table schedule_entries disable trigger user`);
+      const entry = await pool.query(
+        `insert into schedule_entries (employee_id, starts_at, ends_at, kind)
+         values ($1, '2030-01-01T13:00:00Z', '2030-01-01T14:00:00Z', 'APPOINTMENT')
+         returning id`,
+        [employeeId],
+      );
+      await pool.query(`alter table schedule_entries enable trigger user`);
+      const entryId = entry.rows[0].id;
+
+      const appointmentClient = await pool.connect();
+      const blockClient = await pool.connect();
+      const insertAppointment = async () => {
+        try {
+          await appointmentClient.query("begin");
+          await appointmentClient.query(
+            `insert into appointments
+              (schedule_entry_id, client_id, service_name_snapshot, duration_minutes_snapshot, price_cents_snapshot)
+             values ($1, $2, 'Test service', 60, 1000)`,
+            [entryId, clientId],
+          );
+          await appointmentClient.query("commit");
+          return "appointment";
+        } catch (error) {
+          await appointmentClient.query("rollback");
+          throw error;
+        } finally {
+          appointmentClient.release();
+        }
+      };
+      const insertBlock = async () => {
+        try {
+          await blockClient.query("begin");
+          await blockClient.query(
+            `insert into schedule_blocks (schedule_entry_id, reason)
+             values ($1, 'Concurrent test block')`,
+            [entryId],
+          );
+          await blockClient.query("commit");
+          return "block";
+        } catch (error) {
+          await blockClient.query("rollback");
+          throw error;
+        } finally {
+          blockClient.release();
+        }
+      };
+
+      const results = await Promise.allSettled([insertAppointment(), insertBlock()]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected?.status !== "rejected") throw new Error("expected one rejected transaction");
+      expect(rejected.reason.code).toBe("23514");
+
+      const detailCount = await pool.query(
+        `select
+           (select count(*) from appointments where schedule_entry_id = $1)
+           + (select count(*) from schedule_blocks where schedule_entry_id = $1) as count`,
+        [entryId],
+      );
+      expect(Number(detailCount.rows[0].count)).toBe(1);
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
+
+  it("validates both old and new entries when a detail reference moves", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { connectionString, pool } = testDatabase;
+      const { runMigrations } = await import("./migrate.js");
+      await runMigrations(connectionString);
+
+      const employee = await pool.query(
+        `insert into users (name, email_normalized, role)
+         values ('Move Employee', 'move-employee@example.com', 'EMPLOYEE') returning id`,
+      );
+      const client = await pool.query(
+        `insert into users (name, email_normalized, role)
+         values ('Move Client', 'move-client@example.com', 'CLIENT') returning id`,
+      );
+      const employeeId = employee.rows[0].id;
+      const clientId = client.rows[0].id;
+      await pool.query(
+        `insert into employees (user_id, display_name, specialty_summary) values ($1, 'Move Employee', 'Test')`,
+        [employeeId],
+      );
+      const setupClient = await pool.connect();
+      await setupClient.query("begin");
+      try {
+        await setupClient.query(`alter table schedule_entries disable trigger user`);
+        const entries = await setupClient.query(
+          `insert into schedule_entries (employee_id, starts_at, ends_at, kind)
+           values
+             ($1, '2030-01-02T13:00:00Z', '2030-01-02T14:00:00Z', 'APPOINTMENT'),
+             ($1, '2030-01-02T15:00:00Z', '2030-01-02T16:00:00Z', 'APPOINTMENT')
+           returning id order by starts_at`,
+          [employeeId],
+        );
+        await setupClient.query(`alter table schedule_entries enable trigger user`);
+        const [oldEntryId, newEntryId] = entries.rows.map(/** @param {any} row */ (row) => row.id);
+        const appointment = await setupClient.query(
+          `insert into appointments
+            (schedule_entry_id, client_id, service_name_snapshot, duration_minutes_snapshot, price_cents_snapshot)
+           values ($1, $2, 'Move service', 60, 1000) returning id`,
+          [oldEntryId, clientId],
+        );
+
+        await setupClient.query(
+          `update appointments set schedule_entry_id = $1 where id = $2`,
+          [newEntryId, appointment.rows[0].id],
+        );
+        await expect(setupClient.query("commit")).rejects.toMatchObject({ code: "23514" });
+        await setupClient.query("rollback");
+      } catch (error) {
+        await setupClient.query("rollback");
+        throw error;
+      } finally {
+        setupClient.release();
+      }
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
 });
