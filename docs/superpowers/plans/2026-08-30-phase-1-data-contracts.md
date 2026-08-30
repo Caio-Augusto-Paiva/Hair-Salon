@@ -29,6 +29,7 @@
 - Modify: `apps/web/package.json`
 - Modify: `apps/web/package-lock.json`
 - Modify: `apps/web/jsconfig.json`
+- Modify: `apps/web/src/app/layout.js`
 - Create: `apps/web/vitest.config.mjs`
 - Create: `apps/web/src/test/setup.js`
 - Create: `apps/web/src/test/smoke.test.js`
@@ -44,7 +45,7 @@ Run from `apps/web`:
 
 ```powershell
 npm install drizzle-orm pg zod date-fns date-fns-tz server-only
-npm install --save-dev drizzle-kit vitest @vitest/coverage-v8 jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event testcontainers typescript
+npm install --save-dev drizzle-kit vitest @vitest/coverage-v8 jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event testcontainers typescript @types/node @types/react @types/react-dom
 ```
 
 Expected: `package.json` and `package-lock.json` change without audit-critical installation errors.
@@ -74,11 +75,11 @@ Create `vitest.config.mjs` with the `@` alias pointing at `src`, `jsdom` as the 
   "test:unit": "vitest run --project unit",
   "test:integration": "vitest run --project integration",
   "test:coverage": "vitest run --coverage",
-  "typecheck": "next typegen && tsc --noEmit"
+  "typecheck": "next typegen && tsc --noEmit --project jsconfig.json"
 }
 ```
 
-Set `allowJs`, `checkJs`, `noEmit`, `strict`, `module`, `moduleResolution`, JSX, DOM, and Node library options in `jsconfig.json`. Run:
+Set `allowJs`, `checkJs`, `noEmit`, `strict`, `module`, `moduleResolution`, JSX, DOM, and Node library options in `jsconfig.json`, keeping the full `src` tree covered. Add a JSDoc type for the existing `children` prop in `src/app/layout.js`. Run:
 
 ```powershell
 npm run test:unit -- src/test/smoke.test.js
@@ -110,7 +111,7 @@ Run the smoke test, `npm run typecheck`, `npm run lint`, and `npm run build`. Ex
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add apps/web/package.json apps/web/package-lock.json apps/web/jsconfig.json apps/web/vitest.config.mjs apps/web/src/test apps/web/src/lib/time/business-time.js
+git add apps/web/package.json apps/web/package-lock.json apps/web/jsconfig.json apps/web/vitest.config.mjs apps/web/src/test apps/web/src/lib/time/business-time.js apps/web/src/app/layout.js
 git commit -m "test(web): establish JavaScript verification harness"
 ```
 
