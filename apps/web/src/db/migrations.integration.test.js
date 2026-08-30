@@ -194,7 +194,11 @@ describe("PostgreSQL migration lifecycle", () => {
           return "appointment";
         } catch (error) {
           releaseBarrier?.(error);
-          await appointmentClient.query("rollback");
+          try {
+            await appointmentClient.query("rollback");
+          } catch {
+            // Preserve the original database/barrier failure.
+          }
           throw error;
         } finally {
           appointmentClient.release();
@@ -213,7 +217,11 @@ describe("PostgreSQL migration lifecycle", () => {
           return "block";
         } catch (error) {
           releaseBarrier?.(error);
-          await blockClient.query("rollback");
+          try {
+            await blockClient.query("rollback");
+          } catch {
+            // Preserve the original database/barrier failure.
+          }
           throw error;
         } finally {
           blockClient.release();
