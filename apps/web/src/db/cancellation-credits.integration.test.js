@@ -41,6 +41,38 @@ async function readRenewals(pool, listCancellationCreditRenewals, clientId) {
   }
 }
 
+function withBarrier(timeoutMs = 5_000) {
+  let ready = 0;
+  let settled = false;
+  let failure;
+  let resolveOpened;
+  let timeout;
+  const opened = new Promise((resolve) => {
+    resolveOpened = resolve;
+  });
+  const finish = (error = null) => {
+    if (settled) return;
+    settled = true;
+    failure = error;
+    clearTimeout(timeout);
+    resolveOpened();
+  };
+  timeout = setTimeout(
+    () => finish(new Error("Concurrent credit barrier timed out")),
+    timeoutMs,
+  );
+  return {
+    wait: async () => {
+      if (settled && failure) throw failure;
+      ready += 1;
+      if (ready === 2) finish();
+      await opened;
+      if (failure) throw failure;
+    },
+    abort: (error) => finish(error),
+  };
+}
+
 describe("real PostgreSQL cancellation credits", () => {
   it("locks distinct credits, exposes three renewal instants, and honors the 30-day boundary", async () => {
     const database = await startTestDatabase();
@@ -152,19 +184,15 @@ describe("real PostgreSQL cancellation credits", () => {
         );
         const left = await pool.connect();
         const right = await pool.connect();
-        let ready = 0;
-        let release;
-        const barrier = new Promise((resolve) => {
-          release = resolve;
-        });
+        const barrier = withBarrier();
         const claim = async (connection) => {
           let transactionOpen = false;
+          let barrierReached = false;
           try {
             await connection.query("begin");
             transactionOpen = true;
-            ready += 1;
-            if (ready === 2) release();
-            await barrier;
+            barrierReached = true;
+            await barrier.wait();
             const result = await claimCancellationCredit(connection, {
               clientId,
               appointmentId: null,
@@ -173,12 +201,16 @@ describe("real PostgreSQL cancellation credits", () => {
             await connection.query(result.ok ? "commit" : "rollback");
             transactionOpen = false;
             return result;
+          } catch (error) {
+            if (!barrierReached) barrier.abort(error);
+            throw error;
           } finally {
             if (transactionOpen) await rollbackQuietly(connection);
             connection.release();
           }
         };
         const results = await Promise.all([claim(left), claim(right)]);
+        barrier.abort(new Error("Concurrent credit participants finished"));
         expect(results.filter((result) => result.ok)).toHaveLength(1);
         expect(results.filter((result) => result.code === "NO_CANCELLATION_CREDIT")).toHaveLength(1);
       }

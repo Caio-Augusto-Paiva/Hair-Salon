@@ -78,4 +78,50 @@ describe("cancellation credit repository boundaries", () => {
     await expect(claimCancellationCredit(poolLike, { clientId: "client-id" }))
       .rejects.toThrow(/transaction-bound.*Pool/u);
   });
+
+  it("rejects execute-only root Drizzle databases without executing SQL", async () => {
+    let executed = false;
+    const rootDatabaseLike = {
+      execute: async () => {
+        executed = true;
+        return { rows: [] };
+      },
+    };
+    const { claimCancellationCredit } = await import("./cancellation-credit-repository.js");
+
+    await expect(claimCancellationCredit(rootDatabaseLike, { clientId: "client-id" }))
+      .rejects.toThrow(/transaction-bound/u);
+    expect(executed).toBe(false);
+  });
+
+  it("accepts a Drizzle transaction with rollback and keeps values parameterized", async () => {
+    const statements = [];
+    const transactionLike = {
+      rollback: () => { throw new Error("rollback is only a transaction marker"); },
+      execute: async (statement) => {
+        statements.push(statement);
+        if (statements.length === 1) {
+          return { rows: [{ id: "credit-id", slot_number: 1 }] };
+        }
+        return {
+          rows: [{
+            id: "credit-id",
+            slot_number: 1,
+            available_at: new Date("2040-06-01T00:00:00.000Z"),
+            last_used_at: new Date("2040-05-02T00:00:00.000Z"),
+          }],
+        };
+      },
+    };
+    const { claimCancellationCredit } = await import("./cancellation-credit-repository.js");
+    const result = await claimCancellationCredit(transactionLike, {
+      clientId: "client-id",
+      appointmentId: "appointment-id",
+      now: new Date("2040-05-02T00:00:00.000Z"),
+    });
+
+    expect(result).toMatchObject({ ok: true, slotNumber: 1 });
+    expect(JSON.stringify(statements[0].queryChunks)).toContain("client-id");
+    expect(JSON.stringify(statements[0].queryChunks)).toContain("2040-05-02T00:00:00.000Z");
+  });
 });

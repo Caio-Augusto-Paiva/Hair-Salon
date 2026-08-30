@@ -153,16 +153,32 @@ describe("PostgreSQL migration lifecycle", () => {
       const appointmentClient = await pool.connect();
       const blockClient = await pool.connect();
       let readyCount = 0;
-      /** @type {(() => void) | undefined} */
+      let barrierSettled = false;
+      /** @type {unknown} */
+      let barrierFailure;
+      /** @type {(error?: unknown) => void} */
       let releaseBarrier;
+      /** @type {ReturnType<typeof setTimeout>} */
+      let barrierTimeout;
       /** @type {Promise<void>} */
       const bothInserted = new Promise((resolve) => {
-        releaseBarrier = () => resolve();
+        releaseBarrier = (error = null) => {
+          if (barrierSettled) return;
+          barrierSettled = true;
+          barrierFailure = error;
+          clearTimeout(barrierTimeout);
+          resolve();
+        };
       });
+      barrierTimeout = setTimeout(
+        () => releaseBarrier(new Error("Concurrent detail barrier timed out")),
+        5_000,
+      );
       const waitForBothInserts = async () => {
         readyCount += 1;
         if (readyCount === 2) releaseBarrier?.();
         await bothInserted;
+        if (barrierFailure) throw barrierFailure;
       };
       const insertAppointment = async () => {
         try {
@@ -177,6 +193,7 @@ describe("PostgreSQL migration lifecycle", () => {
           await appointmentClient.query("commit");
           return "appointment";
         } catch (error) {
+          releaseBarrier?.(error);
           await appointmentClient.query("rollback");
           throw error;
         } finally {
@@ -195,6 +212,7 @@ describe("PostgreSQL migration lifecycle", () => {
           await blockClient.query("commit");
           return "block";
         } catch (error) {
+          releaseBarrier?.(error);
           await blockClient.query("rollback");
           throw error;
         } finally {

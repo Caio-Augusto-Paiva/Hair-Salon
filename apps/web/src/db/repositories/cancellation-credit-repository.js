@@ -16,7 +16,7 @@ function assertTransaction(transaction) {
   }
   if (
     !(
-      typeof transaction?.execute === "function"
+      (typeof transaction?.execute === "function" && typeof transaction?.rollback === "function")
       || (hasQuery && hasRelease)
     )
   ) {
