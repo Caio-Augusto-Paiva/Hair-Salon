@@ -152,6 +152,18 @@ describe("PostgreSQL migration lifecycle", () => {
 
       const appointmentClient = await pool.connect();
       const blockClient = await pool.connect();
+      let readyCount = 0;
+      /** @type {(() => void) | undefined} */
+      let releaseBarrier;
+      /** @type {Promise<void>} */
+      const bothInserted = new Promise((resolve) => {
+        releaseBarrier = () => resolve();
+      });
+      const waitForBothInserts = async () => {
+        readyCount += 1;
+        if (readyCount === 2) releaseBarrier?.();
+        await bothInserted;
+      };
       const insertAppointment = async () => {
         try {
           await appointmentClient.query("begin");
@@ -161,6 +173,7 @@ describe("PostgreSQL migration lifecycle", () => {
              values ($1, $2, 'Test service', 60, 1000)`,
             [entryId, clientId],
           );
+          await waitForBothInserts();
           await appointmentClient.query("commit");
           return "appointment";
         } catch (error) {
@@ -178,6 +191,7 @@ describe("PostgreSQL migration lifecycle", () => {
              values ($1, 'Concurrent test block')`,
             [entryId],
           );
+          await waitForBothInserts();
           await blockClient.query("commit");
           return "block";
         } catch (error) {
@@ -207,7 +221,7 @@ describe("PostgreSQL migration lifecycle", () => {
     }
   });
 
-  it("validates both old and new entries when a detail reference moves", async () => {
+  it("rejects a move that would orphan the old schedule entry", async () => {
     const testDatabase = await startTestDatabase();
     try {
       const { connectionString, pool } = testDatabase;
@@ -229,29 +243,44 @@ describe("PostgreSQL migration lifecycle", () => {
         [employeeId],
       );
       const setupClient = await pool.connect();
-      await setupClient.query("begin");
       try {
-        await setupClient.query(`alter table schedule_entries disable trigger user`);
+        // First transaction: create two complete, valid appointment entries.
+        await setupClient.query("begin");
         const entries = await setupClient.query(
           `insert into schedule_entries (employee_id, starts_at, ends_at, kind)
            values
              ($1, '2030-01-02T13:00:00Z', '2030-01-02T14:00:00Z', 'APPOINTMENT'),
              ($1, '2030-01-02T15:00:00Z', '2030-01-02T16:00:00Z', 'APPOINTMENT')
-           returning id order by starts_at`,
+           returning id, starts_at`,
           [employeeId],
         );
-        await setupClient.query(`alter table schedule_entries enable trigger user`);
-        const [oldEntryId, newEntryId] = entries.rows.map(/** @param {any} row */ (row) => row.id);
-        const appointment = await setupClient.query(
+        const orderedEntries = entries.rows.toSorted(
+          /** @param {any} left @param {any} right */ (left, right) =>
+          left.starts_at.getTime() - right.starts_at.getTime(),
+        );
+        const oldEntryId = orderedEntries[0].id;
+        const newEntryId = orderedEntries[1].id;
+        await setupClient.query(
           `insert into appointments
             (schedule_entry_id, client_id, service_name_snapshot, duration_minutes_snapshot, price_cents_snapshot)
-           values ($1, $2, 'Move service', 60, 1000) returning id`,
-          [oldEntryId, clientId],
+           values
+             ($1, $2, 'Move service A', 60, 1000),
+             ($3, $2, 'Move service B', 60, 1000)`,
+          [oldEntryId, clientId, newEntryId],
         );
+        await setupClient.query("commit");
 
+        // Second transaction: delete B, then move A to B. The old trigger
+        // checked only B and could commit with A orphaned; both IDs must be
+        // validated by the corrected trigger before this commit succeeds.
+        await setupClient.query("begin");
         await setupClient.query(
-          `update appointments set schedule_entry_id = $1 where id = $2`,
-          [newEntryId, appointment.rows[0].id],
+          `delete from appointments where schedule_entry_id = $1`,
+          [newEntryId],
+        );
+        await setupClient.query(
+          `update appointments set schedule_entry_id = $1 where schedule_entry_id = $2`,
+          [newEntryId, oldEntryId],
         );
         await expect(setupClient.query("commit")).rejects.toMatchObject({ code: "23514" });
         await setupClient.query("rollback");
