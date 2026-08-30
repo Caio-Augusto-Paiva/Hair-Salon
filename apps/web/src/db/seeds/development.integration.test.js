@@ -54,7 +54,129 @@ describe("privacy-safe development seed", () => {
     if (previous === undefined) delete process.env.DEVELOPMENT_SEED_ENABLED;
     else process.env.DEVELOPMENT_SEED_ENABLED = previous;
   });
+
+  it("serializes concurrent runs without duplicate fixtures", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { runMigrations } = await import("../migrate.js");
+      await runMigrations(testDatabase.connectionString);
+      const database = drizzle(testDatabase.pool);
+      const previous = process.env.DEVELOPMENT_SEED_ENABLED;
+      process.env.DEVELOPMENT_SEED_ENABLED = "true";
+      try {
+        await Promise.all([seedDevelopmentDatabase(database), seedDevelopmentDatabase(database)]);
+      } finally {
+        restoreSeedFlag(previous);
+      }
+
+      const result = await snapshot(testDatabase.pool);
+      expect(result.services).toHaveLength(9);
+      expect(result.portfolio).toHaveLength(12);
+      expect(result.clients.map(/** @param {{email_normalized: string}} client */ (client) => client.email_normalized)).toEqual([
+        "cliente-01-demo@example.com",
+        "cliente-02-demo@example.com",
+      ]);
+      expect(result.credits).toEqual([
+        { email_normalized: "cliente-01-demo@example.com", credit_count: 3 },
+        { email_normalized: "cliente-02-demo@example.com", credit_count: 3 },
+      ]);
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
+
+  it("fills missing fixtures without overwriting existing changes", async () => {
+    const testDatabase = await startTestDatabase();
+    try {
+      const { runMigrations } = await import("../migrate.js");
+      await runMigrations(testDatabase.connectionString);
+      const database = drizzle(testDatabase.pool);
+      const previous = process.env.DEVELOPMENT_SEED_ENABLED;
+      process.env.DEVELOPMENT_SEED_ENABLED = "true";
+      try {
+        await seedDevelopmentDatabase(database);
+
+        await testDatabase.pool.query(`
+          update services
+             set duration_minutes = 77, price_cents = 7777,
+                 price_verified_at = '2040-01-01T00:00:00Z', active = false
+           where name = 'Escova'
+        `);
+        await testDatabase.pool.query(`
+          update portfolio_items
+             set alternative_text = 'Texto preservado', display_order = 99, active = false
+           where asset_path = '/images/portfolio/ProtifolioUnhas.png'
+        `);
+        await testDatabase.pool.query(`
+          update users
+             set name = 'Identidade preservada', role = 'ADMIN', status = 'SUSPENDED'
+           where email_normalized = 'cliente-01-demo@example.com'
+        `);
+        await testDatabase.pool.query(`
+          update employees
+             set display_name = 'Profissional preservada', status = 'INACTIVE'
+           where user_id = (select id from users where email_normalized = 'funcionaria-01-demo@example.com')
+        `);
+        await testDatabase.pool.query(`
+          update employee_services
+             set enabled = false
+           where employee_id = (select e.id from employees e join users u on u.id = e.user_id
+                                where u.email_normalized = 'funcionaria-01-demo@example.com')
+             and service_id = (select id from services where name = 'Escova')
+        `);
+
+        await seedDevelopmentDatabase(database);
+      } finally {
+        restoreSeedFlag(previous);
+      }
+
+      const preserved = await testDatabase.pool.query(`
+        select
+          (select duration_minutes from services where name = 'Escova') as service_duration,
+          (select price_cents from services where name = 'Escova') as service_price,
+          (select price_verified_at from services where name = 'Escova') as service_verified,
+          (select active from services where name = 'Escova') as service_active,
+          (select alternative_text from portfolio_items where asset_path = '/images/portfolio/ProtifolioUnhas.png') as portfolio_text,
+          (select display_order from portfolio_items where asset_path = '/images/portfolio/ProtifolioUnhas.png') as portfolio_order,
+          (select active from portfolio_items where asset_path = '/images/portfolio/ProtifolioUnhas.png') as portfolio_active,
+          (select name from users where email_normalized = 'cliente-01-demo@example.com') as client_name,
+          (select role from users where email_normalized = 'cliente-01-demo@example.com') as client_role,
+          (select status from users where email_normalized = 'cliente-01-demo@example.com') as client_status,
+          (select e.display_name from employees e join users u on u.id = e.user_id
+             where u.email_normalized = 'funcionaria-01-demo@example.com') as employee_display,
+          (select e.status from employees e join users u on u.id = e.user_id
+             where u.email_normalized = 'funcionaria-01-demo@example.com') as employee_status,
+          (select enabled from employee_services
+             where employee_id = (select e.id from employees e join users u on u.id = e.user_id
+                                  where u.email_normalized = 'funcionaria-01-demo@example.com')
+               and service_id = (select id from services where name = 'Escova')) as employee_service
+      `);
+      expect(preserved.rows[0]).toEqual({
+        service_duration: 77,
+        service_price: 7777,
+        service_verified: new Date("2040-01-01T00:00:00Z"),
+        service_active: false,
+        portfolio_text: "Texto preservado",
+        portfolio_order: 99,
+        portfolio_active: false,
+        client_name: "Identidade preservada",
+        client_role: "ADMIN",
+        client_status: "SUSPENDED",
+        employee_display: "Profissional preservada",
+        employee_status: "INACTIVE",
+        employee_service: false,
+      });
+    } finally {
+      await stopTestDatabase(testDatabase);
+    }
+  });
 });
+
+/** @param {string|undefined} previous */
+function restoreSeedFlag(previous) {
+  if (previous === undefined) delete process.env.DEVELOPMENT_SEED_ENABLED;
+  else process.env.DEVELOPMENT_SEED_ENABLED = previous;
+}
 
 /** @param {{query: (text: string) => Promise<{rows: any[]}>}} pool */
 async function snapshot(pool) {

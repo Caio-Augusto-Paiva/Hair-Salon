@@ -6,8 +6,10 @@ import { DEVELOPMENT_USERS, PORTFOLIO_ITEMS, SERVICE_FIXTURES } from "./catalog-
 const thisFile = fileURLToPath(import.meta.url);
 
 /**
- * Populate only explicitly enabled development fixtures. This function does
- * not create passwords: login fixtures are intentionally omitted.
+ * Populate only explicitly enabled development fixtures. This function fills
+ * missing fixtures; it is not a reset or reconciliation and never overwrites
+ * existing catalog, identity, or employee changes. It does not create
+ * passwords: login fixtures are intentionally omitted.
  *
  * @param {{ transaction?: (callback: (tx: any) => Promise<unknown>) => Promise<unknown> }} database
  */
@@ -23,33 +25,40 @@ export async function seedDevelopmentDatabase(database) {
   }
 
   return database.transaction(async (transaction) => {
+    // Serialize all development seed runs before any fixture read or write.
+    await transaction.execute(sql`
+      select pg_advisory_xact_lock(hashtext('proveras.development_seed'))
+    `);
+
     const userIds = new Map();
     for (const user of DEVELOPMENT_USERS) {
-      const rows = await transaction.execute(sql`
+      const inserted = await transaction.execute(sql`
         insert into users (name, email_normalized, role, status)
         values (${user.name}, ${user.email}, ${user.role}::user_role, 'ACTIVE'::user_status)
-        on conflict (email_normalized) do update set
-          name = excluded.name,
-          role = excluded.role,
-          status = excluded.status,
-          updated_at = now()
+        on conflict (email_normalized) do nothing
         returning id
       `);
+      const rows = inserted.rows.length
+        ? inserted
+        : await transaction.execute(sql`
+            select id from users where email_normalized = ${user.email} limit 1
+          `);
       userIds.set(user.email, rows.rows[0].id);
     }
 
     const employeeIds = [];
     for (const user of DEVELOPMENT_USERS.filter(({ role }) => role === "EMPLOYEE")) {
-      const rows = await transaction.execute(sql`
+      const inserted = await transaction.execute(sql`
         insert into employees (user_id, display_name, specialty_summary, status)
         values (${userIds.get(user.email)}, ${user.name}, ${user.specialty}, 'ACTIVE'::employee_status)
-        on conflict (user_id) do update set
-          display_name = excluded.display_name,
-          specialty_summary = excluded.specialty_summary,
-          status = excluded.status,
-          updated_at = now()
+        on conflict (user_id) do nothing
         returning id
       `);
+      const rows = inserted.rows.length
+        ? inserted
+        : await transaction.execute(sql`
+            select id from employees where user_id = ${userIds.get(user.email)} limit 1
+          `);
       employeeIds.push(rows.rows[0].id);
     }
 
@@ -86,7 +95,7 @@ export async function seedDevelopmentDatabase(database) {
         await transaction.execute(sql`
           insert into employee_services (employee_id, service_id, enabled)
           values (${employeeId}, ${serviceId}, true)
-          on conflict (employee_id, service_id) do update set enabled = true, updated_at = now()
+          on conflict (employee_id, service_id) do nothing
         `);
       }
     }
@@ -95,11 +104,7 @@ export async function seedDevelopmentDatabase(database) {
       await transaction.execute(sql`
         insert into portfolio_items (asset_path, category, alternative_text, display_order, active)
         values (${item.assetPath}, ${item.category}::service_category, ${item.alternativeText}, ${displayOrder}, true)
-        on conflict (asset_path) do update set
-          category = excluded.category,
-          alternative_text = excluded.alternative_text,
-          display_order = excluded.display_order,
-          active = excluded.active
+        on conflict (asset_path) do nothing
       `);
     }
 
