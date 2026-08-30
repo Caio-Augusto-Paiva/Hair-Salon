@@ -1,5 +1,14 @@
 {
   "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2017",
+    "jsx": "preserve",
+    "lib": ["dom", "dom.iterable", "esnext"],
     "paths": {
       "@/*": ["./src/*"]
     }
