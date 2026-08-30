@@ -32,13 +32,14 @@ describe("privacy-safe development seed", () => {
       expect(firstSnapshot.services).toHaveLength(9);
       expect(firstSnapshot.services.every(/** @param {{price_verified_at: Date|null}} service */ (service) => service.price_verified_at === null)).toBe(true);
       expect(firstSnapshot.portfolio).toHaveLength(12);
-      expect(firstSnapshot.clients.length).toBeGreaterThan(0);
-      expect(firstSnapshot.clients.every(/** @param {{email_normalized: string}} client */ (client) => client.email_normalized.endsWith("@example.com"))).toBe(true);
-      expect(firstSnapshot.credits).toEqual(
-        expect.arrayContaining(
-          firstSnapshot.clients.map(/** @param {{id: string}} client */ (client) => ({ client_id: client.id, credit_count: 3 })),
-        ),
-      );
+      expect(firstSnapshot.clients.map(/** @param {{email_normalized: string}} client */ (client) => client.email_normalized)).toEqual([
+        "cliente-01-demo@example.com",
+        "cliente-02-demo@example.com",
+      ]);
+      expect(firstSnapshot.credits).toEqual([
+        { email_normalized: "cliente-01-demo@example.com", credit_count: 3 },
+        { email_normalized: "cliente-02-demo@example.com", credit_count: 3 },
+      ]);
       expect(firstSnapshot.staffSignupArtifacts).toBe(0);
     } finally {
       await stopTestDatabase(testDatabase);
@@ -62,8 +63,11 @@ async function snapshot(pool) {
                 from services order by name`),
     pool.query(`select asset_path, alternative_text from portfolio_items order by display_order`),
     pool.query(`select id, email_normalized from users where role = 'CLIENT' order by email_normalized`),
-    pool.query(`select client_id, count(*)::int as credit_count
-                from cancellation_credits group by client_id order by client_id`),
+    pool.query(`select u.email_normalized, count(*)::int as credit_count
+                from cancellation_credits cc
+                join users u on u.id = cc.client_id
+                where u.role = 'CLIENT'
+                group by u.email_normalized order by u.email_normalized`),
     pool.query(`select count(*)::int as count from password_reset_tokens where token_hash like 'seed:%'`),
   ]);
   return {

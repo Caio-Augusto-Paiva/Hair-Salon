@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PORTFOLIO_ITEMS, SERVICE_FIXTURES } from "./catalog-data.js";
+import { seedDevelopmentDatabase } from "./development.js";
 
 describe("approved development catalog", () => {
   it("freezes the nine source services and their initial durations", () => {
@@ -33,5 +34,27 @@ describe("approved development catalog", () => {
       { assetPath: "/images/portfolio/PortifolioLiso.png", category: "HAIR", alternativeText: "Cabelo liso finalizado no Angelica's Beauty Salon." },
       { assetPath: "/images/portfolio/PortifolioBocas.png", category: "MAKEUP", alternativeText: "Maquiagem labial realizada no Angelica's Beauty Salon." },
     ]);
+  });
+
+  it("rejects production before opening a transaction", async () => {
+    const environment = /** @type {Record<string, string|undefined>} */ (process.env);
+    const originalNodeEnv = environment.NODE_ENV;
+    const originalSeedFlag = environment.DEVELOPMENT_SEED_ENABLED;
+    let transactionCalled = false;
+    environment.NODE_ENV = "production";
+    environment.DEVELOPMENT_SEED_ENABLED = "true";
+    try {
+      await expect(seedDevelopmentDatabase({
+        transaction: async () => {
+          transactionCalled = true;
+        },
+      })).rejects.toThrow("Development seed cannot run in production");
+      expect(transactionCalled).toBe(false);
+    } finally {
+      if (originalNodeEnv === undefined) delete environment.NODE_ENV;
+      else environment.NODE_ENV = originalNodeEnv;
+      if (originalSeedFlag === undefined) delete environment.DEVELOPMENT_SEED_ENABLED;
+      else environment.DEVELOPMENT_SEED_ENABLED = originalSeedFlag;
+    }
   });
 });

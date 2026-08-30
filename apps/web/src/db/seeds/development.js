@@ -12,6 +12,9 @@ const thisFile = fileURLToPath(import.meta.url);
  * @param {{ transaction?: (callback: (tx: any) => Promise<unknown>) => Promise<unknown> }} database
  */
 export async function seedDevelopmentDatabase(database) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Development seed cannot run in production");
+  }
   if (process.env.DEVELOPMENT_SEED_ENABLED !== "true") {
     throw new Error("Development seed is disabled; set DEVELOPMENT_SEED_ENABLED=true explicitly");
   }
@@ -117,9 +120,6 @@ export async function seedDevelopmentDatabase(database) {
 const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === thisFile;
 
 if (isMainModule) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("Development seed cannot run in production");
-  }
   const { db, pool } = await import("../client.js");
   try {
     await seedDevelopmentDatabase(db);
