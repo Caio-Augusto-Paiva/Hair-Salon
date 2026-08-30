@@ -59,4 +59,27 @@ describe("migration runner", () => {
     ).rejects.toBe(migrationError);
     expect(ended).toBe(true);
   });
+
+  it("stops a started test container when creating its verification pool fails", async () => {
+    let stopped = false;
+    const poolError = new Error("pool creation failed");
+    const container = {
+      getHost: () => "127.0.0.1",
+      getMappedPort: () => 5432,
+      stop: async () => {
+        stopped = true;
+      },
+    };
+    const { startTestDatabase } = await import("./test-database.js");
+
+    await expect(
+      startTestDatabase({
+        startContainer: async () => container,
+        createPool: () => {
+          throw poolError;
+        },
+      }),
+    ).rejects.toBe(poolError);
+    expect(stopped).toBe(true);
+  });
 });

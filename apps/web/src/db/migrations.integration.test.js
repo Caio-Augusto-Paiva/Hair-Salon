@@ -19,7 +19,7 @@ describe("PostgreSQL migration lifecycle", () => {
       ).toEqual(["btree_gist", "pgcrypto"]);
 
       const journal = await verificationPool.query(
-        `select count(*)::int as count from "__drizzle_migrations"`,
+        `select count(*)::int as count from "drizzle"."__drizzle_migrations"`,
       );
       expect(journal.rows[0].count).toBe(1);
     } finally {

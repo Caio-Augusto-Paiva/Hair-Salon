@@ -19,12 +19,16 @@ const TEST_DATABASE_PASSWORD = "proveras_test_password";
  * Start an isolated PostgreSQL test database. An explicit test URL takes
  * precedence so CI can supply its own real PostgreSQL service.
  */
-export async function startTestDatabase() {
+export async function startTestDatabase(options = {}) {
+  const createPool = options.createPool ?? ((config) => new Pool(config));
   const explicitConnectionString =
     process.env.TEST_DATABASE_URL ?? process.env.DATABASE_TEST_URL;
 
   if (explicitConnectionString) {
-    const pool = new Pool({ connectionString: explicitConnectionString, max: 2 });
+    const pool = await createPool({
+      connectionString: explicitConnectionString,
+      max: 2,
+    });
     return {
       connectionString: explicitConnectionString,
       pool,
@@ -34,17 +38,21 @@ export async function startTestDatabase() {
 
   let container;
   try {
-    container = await new GenericContainer("postgres:17-alpine")
-      .withEnvironment({
-        POSTGRES_DB: TEST_DATABASE_NAME,
-        POSTGRES_USER: TEST_DATABASE_USER,
-        POSTGRES_PASSWORD: TEST_DATABASE_PASSWORD,
-      })
-      .withExposedPorts(5432)
-      .withWaitStrategy(
-        Wait.forLogMessage(/database system is ready to accept connections/),
-      )
-      .start();
+    const startContainer =
+      options.startContainer ??
+      (() =>
+        new GenericContainer("postgres:17-alpine")
+          .withEnvironment({
+            POSTGRES_DB: TEST_DATABASE_NAME,
+            POSTGRES_USER: TEST_DATABASE_USER,
+            POSTGRES_PASSWORD: TEST_DATABASE_PASSWORD,
+          })
+          .withExposedPorts(5432)
+          .withWaitStrategy(
+            Wait.forLogMessage(/database system is ready to accept connections/),
+          )
+          .start());
+    container = await startContainer();
   } catch (error) {
     throw new Error(
       "Unable to start the real PostgreSQL test database. Set TEST_DATABASE_URL or DATABASE_TEST_URL, or provide a Docker-compatible runtime for Testcontainers.",
@@ -53,7 +61,17 @@ export async function startTestDatabase() {
   }
 
   const connectionString = `postgresql://${TEST_DATABASE_USER}:${TEST_DATABASE_PASSWORD}@${container.getHost()}:${container.getMappedPort(5432)}/${TEST_DATABASE_NAME}`;
-  const pool = new Pool({ connectionString, max: 2 });
+  let pool;
+  try {
+    pool = await createPool({ connectionString, max: 2 });
+  } catch (error) {
+    try {
+      await container.stop();
+    } catch (cleanupError) {
+      error.cleanupError = cleanupError;
+    }
+    throw error;
+  }
   return { connectionString, pool, container };
 }
 

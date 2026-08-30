@@ -166,3 +166,45 @@ Remaining concern: run the integration test twice against the same real
 database after Docker Desktop (or an explicit `TEST_DATABASE_URL`/
 `DATABASE_TEST_URL`) is available, then confirm extensions and exactly one
 journal row. No production credentials are stored in the repository.
+
+## Review round 1 corrections
+
+Review finding P1 was fixed by qualifying the journal query as
+`"drizzle"."__drizzle_migrations"`, matching Drizzle PostgreSQL's default
+migration schema. The integration assertion now tests the actual journal
+location rather than the `public` schema.
+
+Review finding P2 was fixed by injecting `startContainer` and `createPool`
+boundaries into the test database lifecycle. If pool construction fails after
+the container starts, `container.stop()` is awaited before the original pool
+error is rethrown. The new unit test was observed RED before this change and
+passes afterward, proving the cleanup behavior without starting Docker.
+
+Final review-round verification:
+
+```powershell
+npm run test:unit
+```
+
+```text
+Test Files  5 passed (5)
+Tests       33 passed (33)
+```
+
+The following commands completed with exit code 0:
+
+- `npm run typecheck`
+- `npm run lint`
+- `npm run build`
+
+The real integration remains intentionally unmocked and failed explicitly:
+
+```text
+Test Files  1 failed (1)
+Tests       1 failed (1)
+Error: Unable to start the real PostgreSQL test database. Set TEST_DATABASE_URL or DATABASE_TEST_URL, or provide a Docker-compatible runtime for Testcontainers.
+Caused by: Error: Could not find a working container runtime strategy
+```
+
+No integration GREEN claim is made until Docker or an explicit real test URL
+is available.
