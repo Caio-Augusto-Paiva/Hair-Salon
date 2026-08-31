@@ -6,9 +6,7 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const testcontainersPackage = ["test", "containers"].join("");
 const pgPackage = ["p", "g"].join("");
-const { GenericContainer, Wait } = require(testcontainersPackage);
 const pg = require(pgPackage);
 const { Pool } = pg;
 const TEST_DATABASE_NAME = "proveras_test";
@@ -40,8 +38,11 @@ export async function startTestDatabase(options = {}) {
   try {
     const startContainer =
       options.startContainer ??
-      (() =>
-        new GenericContainer("postgres:17-alpine")
+      (() => {
+        const testcontainersPackage = ["test", "containers"].join("");
+        const { GenericContainer, Wait } = require(testcontainersPackage);
+
+        return new GenericContainer("postgres:17-alpine")
           .withEnvironment({
             POSTGRES_DB: TEST_DATABASE_NAME,
             POSTGRES_USER: TEST_DATABASE_USER,
@@ -51,7 +52,8 @@ export async function startTestDatabase(options = {}) {
           .withWaitStrategy(
             Wait.forLogMessage(/database system is ready to accept connections/),
           )
-          .start());
+          .start();
+      });
     container = await startContainer();
   } catch (error) {
     throw new Error(

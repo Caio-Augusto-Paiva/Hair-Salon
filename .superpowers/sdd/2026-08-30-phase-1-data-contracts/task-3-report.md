@@ -209,6 +209,43 @@ Caused by: Error: Could not find a working container runtime strategy
 No integration GREEN claim is made until Docker or an explicit real test URL
 is available.
 
+## Closing regression correction
+
+After a clean dependency install, the injected cleanup unit test could hit
+the five-second Vitest timeout because `test-database.js` eagerly loaded the
+entire Testcontainers dependency graph even when `startContainer` was
+injected. The RED observation was a cold-cache focused test taking roughly 32
+seconds and timing out; warm runs passed.
+
+The minimal fix moves the Testcontainers/`GenericContainer`/`Wait` require into
+the default container-start function. Injected lifecycle tests now load only
+the lightweight module and no longer initialize Testcontainers. The real
+default path remains unchanged and still loads Testcontainers and starts
+`postgres:17-alpine`.
+
+Verification after the fix:
+
+- `npm run test:unit -- src/db/migrate.test.js` — 3/3 passed in 1.75s.
+- Same focused command with both `TEST_DATABASE_URL` and
+  `DATABASE_TEST_URL` defined — 3/3 passed in 1.77s.
+- `npm run test:unit` — 10 files, 57 tests passed.
+- `npm run typecheck` — exit 0.
+- `npm run lint` — exit 0.
+- `npm run build` — exit 0.
+
+The real integration was attempted again and remains unmocked:
+
+```text
+Test Files  1 failed (1)
+Tests       3 failed (3)
+Caused by: Error: Could not find a working container runtime strategy
+```
+
+All three integration failures are the same environmental Docker blocker;
+there were no skipped or passing integration assertions. The focused unit
+test timeout regression is resolved, while PostgreSQL GREEN remains pending
+on Docker or an explicit real test URL.
+
 ## Review round 2 correction
 
 Review finding P1 identified that the cleanup regression test could inherit
