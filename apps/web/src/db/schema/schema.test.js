@@ -9,6 +9,7 @@ const tableNames = [
   "accounts",
   "passwordResetTokens",
   "authEvents",
+  "authRateLimits",
   "employees",
   "services",
   "employeeServices",

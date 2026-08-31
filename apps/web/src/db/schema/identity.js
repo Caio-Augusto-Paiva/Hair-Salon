@@ -2,6 +2,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -88,5 +89,25 @@ export const authEvents = pgTable(
   },
   (table) => [
     index("auth_events_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);
+
+export const authRateLimits = pgTable(
+  "auth_rate_limits",
+  {
+    bucketKey: text("bucket_key").primaryKey(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true, mode: "date" }).notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    blockedUntil: timestamp("blocked_until", { withTimezone: true, mode: "date" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    check("auth_rate_limits_bucket_key_format", sql`${table.bucketKey} ~ '^[0-9a-f]{64}$'`),
+    check("auth_rate_limits_attempts_non_negative", sql`${table.attempts} >= 0`),
+    check(
+      "auth_rate_limits_blocked_after_window",
+      sql`${table.blockedUntil} is null or ${table.blockedUntil} > ${table.windowStartedAt}`,
+    ),
+    index("auth_rate_limits_expiry_idx").on(table.blockedUntil),
   ],
 );

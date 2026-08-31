@@ -21,7 +21,7 @@ describe("PostgreSQL migration lifecycle", () => {
       const journal = await verificationPool.query(
         `select count(*)::int as count from "drizzle"."__drizzle_migrations"`,
       );
-      expect(journal.rows[0].count).toBe(2);
+      expect(journal.rows[0].count).toBe(3);
 
       const tables = await verificationPool.query(
         `select table_name from information_schema.tables
@@ -32,6 +32,7 @@ describe("PostgreSQL migration lifecycle", () => {
         "appointments",
         "audit_log",
         "auth_events",
+        "auth_rate_limits",
         "calendar_syncs",
         "cancellation_credits",
         "employee_services",
@@ -47,6 +48,51 @@ describe("PostgreSQL migration lifecycle", () => {
         "users",
       ]);
 
+      const authRateLimitColumns = await verificationPool.query(
+        `select column_name, data_type, is_nullable, column_default
+         from information_schema.columns
+         where table_schema = 'public'
+           and table_name = 'auth_rate_limits'
+         order by ordinal_position`,
+      );
+      expect(authRateLimitColumns.rows).toEqual([
+        {
+          column_name: "bucket_key",
+          data_type: "text",
+          is_nullable: "NO",
+          column_default: null,
+        },
+        {
+          column_name: "window_started_at",
+          data_type: "timestamp with time zone",
+          is_nullable: "NO",
+          column_default: null,
+        },
+        {
+          column_name: "attempts",
+          data_type: "integer",
+          is_nullable: "NO",
+          column_default: "0",
+        },
+        {
+          column_name: "blocked_until",
+          data_type: "timestamp with time zone",
+          is_nullable: "YES",
+          column_default: null,
+        },
+        {
+          column_name: "updated_at",
+          data_type: "timestamp with time zone",
+          is_nullable: "NO",
+          column_default: "now()",
+        },
+      ]);
+      expect(
+        authRateLimitColumns.rows.some(
+          /** @param {any} row */ (row) => /email|ip|network|identity/iu.test(row.column_name),
+        ),
+      ).toBe(false);
+
       const schedulingColumns = await verificationPool.query(
         `select table_name, column_name, data_type
          from information_schema.columns
@@ -59,14 +105,18 @@ describe("PostgreSQL migration lifecycle", () => {
       expect(schedulingColumns.rows.every(/** @param {any} row */ (row) => row.data_type === "timestamp with time zone")).toBe(true);
 
       const constraints = await verificationPool.query(
-        `select conname from pg_constraint
+        `select conname, pg_get_constraintdef(oid) as definition from pg_constraint
          where conrelid in (
+           'public.auth_rate_limits'::regclass,
            'public.schedule_entries'::regclass,
            'public.cancellation_credits'::regclass,
            'public.services'::regclass,
            'public.appointments'::regclass
          )
          and conname in (
+           'auth_rate_limits_attempts_non_negative',
+           'auth_rate_limits_blocked_after_window',
+           'auth_rate_limits_bucket_key_format',
            'schedule_entries_valid_interval',
            'schedule_entries_no_employee_overlap',
            'cancellation_credits_slot_number',
@@ -80,12 +130,23 @@ describe("PostgreSQL migration lifecycle", () => {
       expect(constraints.rows.map(/** @param {any} row */ (row) => row.conname)).toEqual([
         "appointments_duration_positive",
         "appointments_price_non_negative",
+        "auth_rate_limits_attempts_non_negative",
+        "auth_rate_limits_blocked_after_window",
+        "auth_rate_limits_bucket_key_format",
         "cancellation_credits_slot_number",
         "schedule_entries_no_employee_overlap",
         "schedule_entries_valid_interval",
         "services_duration_positive",
         "services_price_non_negative",
       ]);
+      const authRateLimitChecks = Object.fromEntries(
+        constraints.rows
+          .filter(/** @param {any} row */ (row) => row.conname.startsWith("auth_rate_limits_"))
+          .map(/** @param {any} row */ (row) => [row.conname, row.definition]),
+      );
+      expect(authRateLimitChecks.auth_rate_limits_attempts_non_negative).toMatch(/attempts\s*>=\s*0/iu);
+      expect(authRateLimitChecks.auth_rate_limits_bucket_key_format).toMatch(/\^\[0-9a-f\]\{64\}\$/u);
+      expect(authRateLimitChecks.auth_rate_limits_blocked_after_window).toMatch(/blocked_until.*window_started_at/iu);
 
       const uniqueIndexes = await verificationPool.query(
         `select indexname from pg_indexes
@@ -96,13 +157,15 @@ describe("PostgreSQL migration lifecycle", () => {
              'appointments_schedule_entry_unique',
              'schedule_blocks_schedule_entry_unique',
              'integration_outbox_idempotency_unique',
-             'cancellation_credits_client_slot_unique'
+             'cancellation_credits_client_slot_unique',
+             'auth_rate_limits_expiry_idx'
            )
          order by indexname`,
       );
       expect(uniqueIndexes.rows.map(/** @param {any} row */ (row) => row.indexname)).toEqual([
         "accounts_provider_identity_unique",
         "appointments_schedule_entry_unique",
+        "auth_rate_limits_expiry_idx",
         "cancellation_credits_client_slot_unique",
         "integration_outbox_idempotency_unique",
         "schedule_blocks_schedule_entry_unique",

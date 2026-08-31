@@ -1,6 +1,7 @@
 export {
   accounts,
   authEvents,
+  authRateLimits,
   passwordResetTokens,
   users,
 } from "./identity.js";
