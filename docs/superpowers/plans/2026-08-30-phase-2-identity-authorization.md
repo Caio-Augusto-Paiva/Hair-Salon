@@ -20,6 +20,16 @@
 - Password policy is 8–128 characters. Hashes use Argon2id with an explicit, versioned parameter envelope and constant-time verification.
 - Auth.js cookies are `HttpOnly`, `SameSite=Lax`, path `/`, and `Secure` outside local development.
 
+## Architect preflight rulings
+
+- OAuth account rows persist only provider type/name/subject identifiers. Access, refresh, and ID tokens remain unset even though the Phase 1 schema permits nullable compatibility columns.
+- Auth.js configuration is exposed through an injectable factory. Importing modules and building the application must not require production secrets or a live database; runtime handlers still fail closed when mandatory secrets are absent.
+- Request boundaries reduce the network address and HMAC it with the dedicated rate-limit secret before repository calls. PostgreSQL receives only a domain-separated bucket key and never a raw address or e-mail.
+- `createEmployeeAccount` accepts an actor identity claim, reloads the actor from PostgreSQL, and authorizes the current `ACTIVE ADMIN` state itself. It does not depend on the Task 4 HTTP/session guard.
+- Public password-reset responses never expose the raw token or capture-adapter payload. Capture output is local-test evidence only.
+- Auth.js intentionally uses no stock database adapter because the approved Phase 1 schema is not the adapter schema; Google resolution and linking remain explicit repository operations.
+- Phase 2 inherits the Phase 1 external PostgreSQL and Drizzle inspection gates. Local unit/build success does not waive those gates.
+
 ---
 
 ### Task 1: Freeze identity contracts and native password hashing
