@@ -10,7 +10,7 @@ O projeto existente foi preservado e continuado sem recriação. A fundação Ne
 
 A arquitetura operacional foi alinhada à decisão aprovada de usar Supabase somente como PostgreSQL gerenciado. Auth.js e o servidor Next.js permanecem responsáveis por identidade, sessões, autorização e regras de aplicação. O runtime usa `DATABASE_URL`; migrations e administração controlada usam `DATABASE_DIRECT_URL`.
 
-O bloqueio de infraestrutura que impedia Testcontainers foi resolvido com a instalação do Docker Desktop. A execução real de PostgreSQL 17 agora funciona, mas revelou uma pendência separada na configuração do Vitest: módulos protegidos por `server-only` são resolvidos pelo ramo de Client Component nos testes de integração. Nenhum teste foi ignorado, mockado ou convertido para esconder essa falha.
+O bloqueio de infraestrutura que impedia Testcontainers foi resolvido com a instalação do Docker Desktop. A execução real de PostgreSQL 17 está operacional e a configuração de integração do Vitest agora substitui o marcador `server-only` somente no projeto Node de testes. O código de produção continua importando o marcador real. Nenhum teste foi ignorado, mockado ou convertido para esconder falhas.
 
 ## 2. Trabalho implementado no repositório
 
@@ -48,12 +48,13 @@ O bloqueio de infraestrutura que impedia Testcontainers foi resolvido com a inst
 - Hash e verificação de senha com envelope versionado.
 - Migration e repositório para rate limiting de autenticação.
 - Buckets HMAC sem armazenar e-mail ou atributo de rede em texto claro.
-- Alterações adicionais de endurecimento do rate limiting permanecem locais e ainda não foram incorporadas a um commit final.
+- O endurecimento adicional do rate limiting foi incorporado, incluindo entrada canônica de atributo de rede, payload HMAC com campos prefixados por comprimento e corridas reais com dez conexões PostgreSQL distintas.
 
 ## 3. Commits recentes desta retomada
 
 - `52fec7a` — `docs: align operations with Supabase PostgreSQL`
 - `1b48cb6` — `fix(db): separate runtime and migration connections`
+- `c9bf447` — `fix(auth): harden rate limits and PostgreSQL races`
 - `a2c9f0a` — merge dos documentos de animação já concluídos na `main`
 
 O histórico anterior da branch contém os commits separados da Fase 1 e do início da Fase 2, mantendo lotes pequenos e revisáveis.
@@ -85,7 +86,8 @@ Resultado: `postgres (PostgreSQL) 17.11`.
 | Verificação | Resultado mais recente |
 |---|---|
 | `npm ci` | 658 pacotes instalados com lockfile reproduzível |
-| `npm run test:unit` | 14 arquivos e 94 testes aprovados |
+| `npm run test:unit` | 14 arquivos e 93 testes aprovados |
+| `npm run test:integration` | 5 arquivos e 17 testes aprovados em PostgreSQL 17 real; zero ignorados |
 | `npm run typecheck` | aprovado |
 | `npm run lint` | aprovado |
 | `npm run build` | build de produção aprovado |
@@ -99,54 +101,27 @@ O `npm ci` reportou quatro vulnerabilidades moderadas somente no conjunto que in
 
 ## 6. Resultado atual da integração PostgreSQL
 
-Antes da instalação, os testes falhavam porque nenhum runtime Docker/Podman/PostgreSQL estava disponível. Depois da instalação:
+A abordagem arquitetural foi aprovada e implementada. O projeto de integração do Vitest possui um alias exclusivo para um shim vazio de `server-only`; projetos unitários e o build Next.js não recebem esse alias. A primeira execução GREEN revelou ainda que o entrypoint oficial do PostgreSQL emite duas mensagens de prontidão — uma para o servidor temporário de inicialização e outra para o definitivo. O lifecycle de teste agora aguarda a segunda ocorrência.
 
-1. Testcontainers encontrou o daemon Docker.
-2. O helper de credenciais foi encontrado ao atualizar o `PATH` do processo.
-3. A imagem oficial PostgreSQL 17 foi iniciada.
-4. A suíte alcançou a importação dos módulos server-only.
-5. Dezesseis testes falharam no mesmo limite de módulo; um teste foi aprovado.
+Os testes reais também revelaram duas fontes de deadlock que antes ficavam ocultas pela falta do Docker:
 
-Erro compartilhado atual:
+- o trigger diferido de detalhe tentava promover locks de FK para `FOR UPDATE`; uma migration incremental usa `FOR NO KEY UPDATE`, compatível com `KEY SHARE`;
+- inserções GiST concorrentes e conflitantes podiam aguardar circularmente os transaction IDs; um trigger `BEFORE` serializa escritas ativas pela linha da funcionária antes da verificação de exclusão.
 
-```text
-This module cannot be imported from a Client Component module.
-It should only be used from a Server Component.
-```
+A constraint GiST continua sendo a decisão final de disponibilidade e o repositório continua traduzindo somente a violação nomeada `23P01` para `SLOT_UNAVAILABLE`. O teste focal de migrations passou com 3/3 casos e a suíte completa passou com 17/17 testes em cinco arquivos.
 
-A causa é a resolução condicional do pacote marcador `server-only` no worker do Vitest. Três hipóteses foram testadas e revertidas quando não resolveram o problema de forma segura:
+## 7. Fase 2 iniciada
 
-- `resolve.conditions`: aplica-se ao ambiente client e foi ignorado pelo teste Node.
-- `ssr.resolve.conditions`: resolveu `server-only`, mas alterou a interoperabilidade CommonJS de `pg`.
-- `test.execArgv`: não alcançou a resolução externalizada do marcador.
+O lote de rate limiting de identidade foi concluído e versionado no commit `c9bf447` (`fix(auth): harden rate limits and PostgreSQL races`). O HMAC aceita somente o atributo de rede previamente reduzido no formato canônico, rejeita caracteres de controle e usa campos binários prefixados por comprimento, evitando ambiguidades de delimitação. Os testes provam separação entre login/reset, janela, bloqueio e dez tentativas concorrentes reais.
 
-Nenhuma dessas tentativas permaneceu no diff.
+A revisão independente não encontrou itens críticos ou importantes. Dois itens menores de precisão dos testes foram corrigidos: a função de locking passa a ser inspecionada no catálogo PostgreSQL instalado, e a prova de privacidade verifica o atributo de rede canônico efetivamente usado pelos fixtures.
 
-## 7. Decisão técnica pendente
-
-A direção recomendada para o próximo lote é configurar um alias exclusivamente no projeto de integração, apontando `server-only` para um módulo vazio de teste. O pacote é um marcador de fronteira em tempo de build e não possui comportamento de produção; o alias ficaria restrito ao runner Node de integração, enquanto o código entregue continuaria importando e preservando `server-only` normalmente.
-
-Antes de implementar essa quarta abordagem, o fluxo de debugging exige aprovação arquitetural explícita, porque três configurações anteriores falharam e uma delas afetou `pg`.
-
-## 8. Estado das alterações locais preservadas
-
-Na worktree de desenvolvimento permanecem modificados, sem commit novo:
-
-- `apps/web/src/db/migrations.integration.test.js`
-- `apps/web/src/features/auth/rate-limit-repository.js`
-- `apps/web/src/features/auth/rate-limit-repository.test.js`
-- `apps/web/src/features/auth/rate-limit.integration.test.js`
-
-Essas mudanças já existiam antes da instalação e foram preservadas. Na branch principal, a alteração local da proprietária que renomeia o produto para Proveras também permanece intacta.
+Na branch principal, a alteração local da proprietária que renomeia o produto para Proveras permanece intacta e não foi incluída neste worktree.
 
 ## 9. Próximos passos
 
-1. Aprovar e implementar a fronteira de teste para `server-only` com TDD.
-2. Reexecutar o teste focal de migrations contra PostgreSQL 17.
-3. Reexecutar toda a suíte de integração, sem testes ignorados.
-4. Repetir unitários, typecheck, lint, build, `db:check` e auditoria.
-5. Revisar e concluir o lote local de rate limiting da Fase 2.
-6. Continuar identidade/autorização em lotes pequenos conforme o plano aprovado.
+1. Iniciar a Task 3 da Fase 2: repositórios de conta e criação segura por perfil.
+2. Continuar identidade/autorização em lotes pequenos conforme o plano aprovado.
 
 ## 10. Riscos e bloqueadores externos futuros
 
