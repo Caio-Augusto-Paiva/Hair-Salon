@@ -50,7 +50,7 @@ export async function startTestDatabase(options = {}) {
           })
           .withExposedPorts(5432)
           .withWaitStrategy(
-            Wait.forLogMessage(/database system is ready to accept connections/),
+            Wait.forLogMessage(/database system is ready to accept connections/, 2),
           )
           .start();
       });

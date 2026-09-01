@@ -1,6 +1,11 @@
 import { startTestDatabase, stopTestDatabase } from "./test-database.js";
 import { describe, expect, it } from "vitest";
 
+/** @param {string} definition */
+function normalizeDefinition(definition) {
+  return definition.toLowerCase().replace(/[\s"()]+/gu, "");
+}
+
 describe("PostgreSQL migration lifecycle", () => {
   it("applies extensions and journaled migrations idempotently on repeated runs", async () => {
     const testDatabase = await startTestDatabase();
@@ -21,7 +26,7 @@ describe("PostgreSQL migration lifecycle", () => {
       const journal = await verificationPool.query(
         `select count(*)::int as count from "drizzle"."__drizzle_migrations"`,
       );
-      expect(journal.rows[0].count).toBe(3);
+      expect(journal.rows[0].count).toBe(4);
 
       const tables = await verificationPool.query(
         `select table_name from information_schema.tables
@@ -93,6 +98,23 @@ describe("PostgreSQL migration lifecycle", () => {
         ),
       ).toBe(false);
 
+      const authRateLimitPrimaryKey = await verificationPool.query(
+        `select constraint_row.conname,
+                array_agg(attribute.attname::text order by key_column.ordinality) as columns
+           from pg_constraint as constraint_row
+           cross join lateral unnest(constraint_row.conkey)
+             with ordinality as key_column(attnum, ordinality)
+           join pg_attribute as attribute
+             on attribute.attrelid = constraint_row.conrelid
+            and attribute.attnum = key_column.attnum
+          where constraint_row.conrelid = 'public.auth_rate_limits'::regclass
+            and constraint_row.contype = 'p'
+          group by constraint_row.conname`,
+      );
+      expect(authRateLimitPrimaryKey.rows).toEqual([
+        { conname: "auth_rate_limits_pkey", columns: ["bucket_key"] },
+      ]);
+
       const schedulingColumns = await verificationPool.query(
         `select table_name, column_name, data_type
          from information_schema.columns
@@ -144,9 +166,18 @@ describe("PostgreSQL migration lifecycle", () => {
           .filter(/** @param {any} row */ (row) => row.conname.startsWith("auth_rate_limits_"))
           .map(/** @param {any} row */ (row) => [row.conname, row.definition]),
       );
-      expect(authRateLimitChecks.auth_rate_limits_attempts_non_negative).toMatch(/attempts\s*>=\s*0/iu);
-      expect(authRateLimitChecks.auth_rate_limits_bucket_key_format).toMatch(/\^\[0-9a-f\]\{64\}\$/u);
-      expect(authRateLimitChecks.auth_rate_limits_blocked_after_window).toMatch(/blocked_until.*window_started_at/iu);
+      expect(Object.fromEntries(
+        Object.entries(authRateLimitChecks).map(([name, definition]) => [
+          name,
+          normalizeDefinition(definition),
+        ]),
+      )).toEqual({
+        auth_rate_limits_attempts_non_negative: "checkattempts>=0",
+        auth_rate_limits_blocked_after_window:
+          "checkblocked_untilisnullorblocked_until>window_started_at",
+        auth_rate_limits_bucket_key_format:
+          "checkbucket_key~'^[0-9a-f]{64}$'::text",
+      });
 
       const uniqueIndexes = await verificationPool.query(
         `select indexname from pg_indexes
@@ -171,6 +202,31 @@ describe("PostgreSQL migration lifecycle", () => {
         "schedule_blocks_schedule_entry_unique",
         "users_email_normalized_unique",
       ]);
+
+      const authRateLimitExpiryIndex = await verificationPool.query(
+        `select index_relation.relname as index_name,
+                pg_get_indexdef(index_relation.oid) as definition,
+                array_agg(attribute.attname::text order by key_column.ordinality) as columns
+           from pg_class as table_relation
+           join pg_index as index_row on index_row.indrelid = table_relation.oid
+           join pg_class as index_relation on index_relation.oid = index_row.indexrelid
+           cross join lateral unnest(index_row.indkey)
+             with ordinality as key_column(attnum, ordinality)
+           join pg_attribute as attribute
+             on attribute.attrelid = table_relation.oid
+            and attribute.attnum = key_column.attnum
+          where table_relation.oid = 'public.auth_rate_limits'::regclass
+            and index_relation.relname = 'auth_rate_limits_expiry_idx'
+          group by index_relation.relname, index_relation.oid`,
+      );
+      expect(authRateLimitExpiryIndex.rows).toHaveLength(1);
+      expect(authRateLimitExpiryIndex.rows[0]).toMatchObject({
+        index_name: "auth_rate_limits_expiry_idx",
+        columns: ["blocked_until"],
+      });
+      expect(normalizeDefinition(authRateLimitExpiryIndex.rows[0].definition)).toBe(
+        "createindexauth_rate_limits_expiry_idxonpublic.auth_rate_limitsusingbtreeblocked_until",
+      );
     } finally {
       await stopTestDatabase(testDatabase);
     }
@@ -195,11 +251,13 @@ describe("PostgreSQL migration lifecycle", () => {
       );
       const employeeId = employee.rows[0].id;
       const clientId = client.rows[0].id;
-      await pool.query(
+      const employeeDetail = await pool.query(
         `insert into employees (user_id, display_name, specialty_summary)
-         values ($1, 'Test Employee', 'Test')`,
+         values ($1, 'Test Employee', 'Test')
+         returning id`,
         [employeeId],
       );
+      const employeeDetailId = employeeDetail.rows[0].id;
 
       // The fixture is intentionally bare so both transactions can race to
       // provide the one required detail row.
@@ -208,7 +266,7 @@ describe("PostgreSQL migration lifecycle", () => {
         `insert into schedule_entries (employee_id, starts_at, ends_at, kind)
          values ($1, '2030-01-01T13:00:00Z', '2030-01-01T14:00:00Z', 'APPOINTMENT')
          returning id`,
-        [employeeId],
+        [employeeDetailId],
       );
       await pool.query(`alter table schedule_entries enable trigger user`);
       const entryId = entry.rows[0].id;
@@ -327,10 +385,13 @@ describe("PostgreSQL migration lifecycle", () => {
       );
       const employeeId = employee.rows[0].id;
       const clientId = client.rows[0].id;
-      await pool.query(
-        `insert into employees (user_id, display_name, specialty_summary) values ($1, 'Move Employee', 'Test')`,
+      const employeeDetail = await pool.query(
+        `insert into employees (user_id, display_name, specialty_summary)
+         values ($1, 'Move Employee', 'Test')
+         returning id`,
         [employeeId],
       );
+      const employeeDetailId = employeeDetail.rows[0].id;
       const setupClient = await pool.connect();
       try {
         // First transaction: create two complete, valid appointment entries.
@@ -341,7 +402,7 @@ describe("PostgreSQL migration lifecycle", () => {
              ($1, '2030-01-02T13:00:00Z', '2030-01-02T14:00:00Z', 'APPOINTMENT'),
              ($1, '2030-01-02T15:00:00Z', '2030-01-02T16:00:00Z', 'APPOINTMENT')
            returning id, starts_at`,
-          [employeeId],
+          [employeeDetailId],
         );
         const orderedEntries = entries.rows.toSorted(
           /** @param {any} left @param {any} right */ (left, right) =>

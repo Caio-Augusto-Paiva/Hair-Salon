@@ -4,19 +4,34 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const networkAttribute = `network:v1:${"a".repeat(64)}`;
+
+function lengthPrefixed(value) {
+  const bytes = Buffer.from(value, "utf8");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(bytes.length);
+  return Buffer.concat([length, bytes]);
+}
+
 describe("authentication rate-limit repository", () => {
   it("derives deterministic, domain-separated HMAC-SHA-256 bucket keys", async () => {
     const { deriveAuthBucket } = await import("./rate-limit-repository.js");
     const input = {
       emailNormalized: "ana@example.com",
-      networkAttribute: "network-prefix:v1:abc123",
+      networkAttribute,
       secret: "dedicated-test-rate-limit-secret",
     };
 
     const login = deriveAuthBucket({ ...input, purpose: "login" });
     const reset = deriveAuthBucket({ ...input, purpose: "reset" });
+    const expectedPayload = Buffer.concat([
+      Buffer.from("proveras:auth-rate-limit:v1", "utf8"),
+      lengthPrefixed("login"),
+      lengthPrefixed(input.emailNormalized),
+      lengthPrefixed(input.networkAttribute),
+    ]);
     const expected = createHmac("sha256", input.secret)
-      .update("proveras:auth-rate-limit:v1\0login\0ana@example.com\0network-prefix:v1:abc123", "utf8")
+      .update(expectedPayload)
       .digest("hex");
 
     expect(login).toBe(expected);
@@ -30,16 +45,39 @@ describe("authentication rate-limit repository", () => {
   it.each([
     ["purpose", { purpose: "signup" }],
     ["emailNormalized", { emailNormalized: " Ana@example.com" }],
+    ["raw network IP", { networkAttribute: "203.0.113.10" }],
     ["networkAttribute", { networkAttribute: "" }],
+    ["network control", { networkAttribute: `${networkAttribute}\0` }],
+    ["email control", { emailNormalized: "ana\0@example.com" }],
+    ["secret control", { secret: "dedicated-test\0rate-limit-secret" }],
     ["secret", { secret: "" }],
   ])("rejects invalid %s before deriving a bucket", async (_label, override) => {
     const { deriveAuthBucket } = await import("./rate-limit-repository.js");
     expect(() => deriveAuthBucket({
       purpose: "login",
       emailNormalized: "ana@example.com",
-      networkAttribute: "network-prefix:v1:abc123",
+      networkAttribute,
       secret: "dedicated-test-rate-limit-secret",
       ...override,
+    })).toThrow(TypeError);
+  });
+
+  it("rejects both structurally ambiguous NUL-delimited input pairs", async () => {
+    const { deriveAuthBucket } = await import("./rate-limit-repository.js");
+    const common = {
+      purpose: "login",
+      secret: "dedicated-test-rate-limit-secret",
+    };
+
+    expect(() => deriveAuthBucket({
+      ...common,
+      emailNormalized: "a",
+      networkAttribute: "b\0c",
+    })).toThrow(TypeError);
+    expect(() => deriveAuthBucket({
+      ...common,
+      emailNormalized: "a\0b",
+      networkAttribute: "c",
     })).toThrow(TypeError);
   });
 

@@ -24,6 +24,11 @@ export default defineConfig({
       },
       {
         extends: true,
+        resolve: {
+          alias: {
+            "server-only": path.resolve(rootDir, "src/test/server-only.js"),
+          },
+        },
         test: {
           name: "integration",
           environment: "node",

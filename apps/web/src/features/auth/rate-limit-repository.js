@@ -3,13 +3,27 @@ import "server-only";
 import { createHmac } from "node:crypto";
 
 const BUCKET_KEY_PATTERN = /^[0-9a-f]{64}$/u;
+const NETWORK_ATTRIBUTE_PATTERN = /^network:v1:[0-9a-f]{64}$/u;
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const AUTH_PURPOSES = new Set(["login", "reset"]);
 
 /** @param {unknown} value @param {string} name */
-function assertNonEmptyString(value, name) {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${name} must be a non-empty string`);
+function assertSafeString(value, name) {
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || CONTROL_CHARACTER_PATTERN.test(value)
+  ) {
+    throw new TypeError(`${name} must be a non-empty string without control characters`);
   }
+}
+
+/** @param {string} value */
+function lengthPrefixed(value) {
+  const bytes = Buffer.from(value, "utf8");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(bytes.length);
+  return Buffer.concat([length, bytes]);
 }
 
 /** @param {unknown} value @param {string} name */
@@ -30,21 +44,25 @@ export function deriveAuthBucket({ purpose, emailNormalized, networkAttribute, s
   if (!AUTH_PURPOSES.has(purpose)) {
     throw new TypeError("purpose must be login or reset");
   }
-  assertNonEmptyString(emailNormalized, "emailNormalized");
+  assertSafeString(emailNormalized, "emailNormalized");
   if (emailNormalized !== emailNormalized.trim().toLowerCase()) {
     throw new TypeError("emailNormalized must already be trimmed and lower-case");
   }
-  assertNonEmptyString(networkAttribute, "networkAttribute");
-  if (networkAttribute !== networkAttribute.trim()) {
-    throw new TypeError("networkAttribute must already be reduced and trimmed");
+  assertSafeString(networkAttribute, "networkAttribute");
+  if (!NETWORK_ATTRIBUTE_PATTERN.test(networkAttribute)) {
+    throw new TypeError("networkAttribute must use canonical network:v1:<sha256> format");
   }
-  assertNonEmptyString(secret, "secret");
+  assertSafeString(secret, "secret");
+
+  const payload = Buffer.concat([
+    Buffer.from("proveras:auth-rate-limit:v1", "utf8"),
+    lengthPrefixed(purpose),
+    lengthPrefixed(emailNormalized),
+    lengthPrefixed(networkAttribute),
+  ]);
 
   return createHmac("sha256", secret)
-    .update(
-      `proveras:auth-rate-limit:v1\0${purpose}\0${emailNormalized}\0${networkAttribute}`,
-      "utf8",
-    )
+    .update(payload)
     .digest("hex");
 }
 
