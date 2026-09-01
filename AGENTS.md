@@ -8,6 +8,7 @@ Read `INSTRUCOES_PROJETO.md` before planning or changing code. It defines the pr
 
 - `apps/web/`: deployable Next.js application. Run npm commands from this directory.
 - `docs/superpowers/plans/`: approved implementation plans.
+- `docs/frontend/ANIMACOES_REFERENCIAS.md`: owner-curated motion references and the required frontend animation decision log.
 - Root image files: immutable source copies supplied by the owner.
 - `apps/web/public/images/`: frontend-ready copies of approved assets.
 
@@ -54,6 +55,8 @@ $impeccable critique
 ```
 
 Do not use `$huashu-design` to implement the production application. It may be used only for approved standalone HTML visual prototypes; production UI remains Next.js/React.
+
+Before proposing or implementing frontend motion, read `docs/frontend/ANIMACOES_REFERENCIAS.md`. The frontend agent must compare only the references relevant to the current surface, record the selected or rejected direction, and verify reduced motion, keyboard behavior, responsive performance, and absence of layout shift.
 
 ## Agent boundaries
 
