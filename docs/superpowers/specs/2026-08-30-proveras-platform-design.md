@@ -6,11 +6,11 @@
 
 ## 1. Purpose and scope
 
-Build the complete Proveras scheduling platform for Angelica's Beauty Salon as a deployable Next.js application backed by PostgreSQL. The product includes the public site, authentication, client booking, employee and administrator workspaces, privacy workflows, resilient external integrations, automated tests, operational documentation, and Vercel readiness.
+Build the complete Proveras scheduling platform for Angelica's Beauty Salon as a deployable Next.js application backed by Supabase-managed PostgreSQL. The product includes the public site, authentication, client booking, employee and administrator workspaces, privacy workflows, resilient external integrations, automated tests, operational documentation, and Vercel readiness.
 
 The implementation preserves the current JavaScript Next.js foundation in `apps/web`. It does not process real PIX or card payments, publish to Vercel, use real credentials, or mutate the owner's source images.
 
-The local uncommitted change that names the product **Proveras** remains owner-controlled and must not be included in task commits. The required logo alternative text remains **Angelica's Beauty Salon**.
+The owner's local naming change to **Proveras** is preserved by the dedicated Supabase operational-documentation update and must not be lost or silently rewritten by later feature commits. The required logo alternative text remains **Angelica's Beauty Salon**.
 
 ## 2. Chosen architecture
 
@@ -20,11 +20,13 @@ Use a modular monolith in the existing Next.js App Router application:
 - **ViewModels:** form state, display transformations, validation results, and interaction state under each feature.
 - **Models:** domain services, repositories, database schema, and integration adapters in server-only modules.
 - **Mutations:** Server Actions for first-party UI mutations; Route Handlers for Auth.js, exports, cron, readiness, and integration callbacks.
-- **Persistence:** PostgreSQL through Drizzle ORM and versioned SQL migrations.
+- **Persistence:** Supabase only as managed PostgreSQL, accessed server-side through Drizzle ORM and `pg` with versioned SQL migrations.
 - **Identity:** Auth.js with credentials and configurable Google OAuth, JWT sessions in secure cookies, and server-side role/status checks.
 - **External effects:** transactional outbox processed by authenticated jobs with idempotent adapters.
 
-This architecture keeps booking transactions and their invariants in one runtime and database while retaining explicit module boundaries. A separate API service would add deployment and contract overhead; a BaaS-first design would make the required PostgreSQL concurrency rules and session semantics less explicit.
+This architecture keeps booking transactions and their invariants in one runtime and database while retaining explicit module boundaries. The Next.js server remains the application backend and Auth.js remains the identity boundary. Supabase Auth, browser clients, Data API/PostgREST, Realtime, Edge Functions, and Storage are outside the approved architecture.
+
+Production uses `DATABASE_URL` with Supabase Supavisor transaction mode for the Vercel runtime and a deliberately small application-side pool. Runtime code does not depend on session state or named prepared statements. Migrations, schema inspection, backup/restore, and controlled administration use `DATABASE_DIRECT_URL`; Supavisor session mode is the approved fallback when the direct IPv6 endpoint is unavailable. Migrations are explicit deployment operations and never run during a request or module import.
 
 ## 3. Module boundaries
 
@@ -244,6 +246,7 @@ The public number is normalized to digits in international format and rendered a
 
 ## 11. LGPD and retention
 
+- The salon remains the data controller and Supabase is named only as the managed PostgreSQL infrastructure operator; the policy must not imply use of Supabase Auth or other excluded products.
 - The public privacy policy reproduces the approved source text and marks legal validation as a release prerequisite.
 - Requests generate an opaque protocol and enter the admin workflow without exposing request lists publicly.
 - Data access and export follow least privilege.
@@ -294,14 +297,15 @@ Commands absent before a wave are added by the task that introduces the correspo
 
 The implementation exposes a readiness report that checks presence and coherent combinations of environment variables without revealing values. Publication remains blocked until the administrator supplies or validates:
 
-- managed PostgreSQL with pooled production connection;
+- separate Supabase development and production projects in an approved region;
+- `DATABASE_URL` configured with Supavisor transaction mode and `DATABASE_DIRECT_URL` configured for migrations/administration, with secrets stored only in the relevant Vercel environments or an approved secret manager;
 - Auth secret and Google OAuth credentials if Google login is enabled;
 - Google Calendar authorization and global/per-employee calendar mapping;
 - transactional e-mail provider, sender, and domain authentication;
 - final service prices, staff accounts, specialties, and enabled services;
 - WhatsApp number and address;
 - legal approval of privacy policy, retention, and request channel;
-- backup provider, restore drill evidence, and production monitoring;
+- Supabase backup retention, documented restore drill evidence, incident contacts, and production monitoring;
 - manual Chrome, Edge, Firefox, Safari, and mobile validation.
 
 Missing external configuration is represented explicitly as disabled adapters or failed readiness items, never as invented credentials or hidden success.

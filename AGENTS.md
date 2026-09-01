@@ -14,9 +14,9 @@ Read `INSTRUCOES_PROJETO.md` before planning or changing code. It defines the pr
 
 The Vercel project root directory is `apps/web`.
 
-## Required feature workflow
+## Just-in-time feature workflow
 
-Every feature or behavior change follows this sequence:
+Follow this lifecycle in order, loading each skill only when its stage begins:
 
 ```text
 $brainstorming
@@ -28,6 +28,8 @@ $brainstorming
 → $verification-before-completion
 → $finishing-a-development-branch
 ```
+
+Use `$brainstorming` only when a behavior or architectural decision is not already approved. Use `$writing-plans` only after approval for a multi-step change, `$using-git-worktrees` when execution begins, and `$test-driven-development` for each production behavior. Finish each meaningful batch with review and verification; use `$finishing-a-development-branch` only after all gates are green.
 
 Use `$systematic-debugging` before proposing a fix for any bug, failed test, build error, integration issue, or unexpected performance result.
 
@@ -55,6 +57,20 @@ $impeccable critique
 ```
 
 Do not use `$huashu-design` to implement the production application. It may be used only for approved standalone HTML visual prototypes; production UI remains Next.js/React.
+
+## Supabase boundary
+
+- Supabase is only the managed PostgreSQL provider. Auth.js and the Next.js server remain the identity and application boundaries.
+- Runtime server code uses `DATABASE_URL` through Supavisor transaction mode with a small bounded pool and no dependency on session state or named prepared statements.
+- Migrations, schema inspection, backup/restore, and controlled administration use `DATABASE_DIRECT_URL`; Supavisor session mode is the approved fallback when the direct IPv6 endpoint is unavailable.
+- Keep Drizzle, `pg`, Testcontainers, and versioned SQL migrations. Do not introduce Supabase Auth, browser clients, Data API/PostgREST, Realtime, Edge Functions, or Storage without a separately approved design.
+- Never run migrations during a request or module import. PostgreSQL 17 integration and concurrency tests remain isolated from Supabase.
+
+## Context and delegation
+
+- Read `INSTRUCOES_PROJETO.md` once at task start, then prefer targeted searches and bounded excerpts. Filter long logs, generated output, and lockfiles before loading them into context.
+- Small documentation changes and sequential database or backend tasks stay with the main agent. Use subagents only for genuinely independent work with non-overlapping files.
+- When subagents are used, announce their scopes and permitted files, report their evidence, inspect every diff, and rerun the relevant verification independently.
 
 Before proposing or implementing frontend motion, read `docs/frontend/ANIMACOES_REFERENCIAS.md`. The frontend agent must compare only the references relevant to the current surface, record the selected or rejected direction, and verify reduced motion, keyboard behavior, responsive performance, and absence of layout shift.
 

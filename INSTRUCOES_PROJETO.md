@@ -2,7 +2,7 @@
 
 ## 1. Visão geral
 
-- **Produto:** site responsivo para o salão feminino **Angelica's Beauty Salon**.
+- **Produto:** site responsivo para o salão feminino **Proveras**.
 - **Objetivo:** permitir que clientes se cadastrem, consultem disponibilidade e agendem serviços; permitir que a dona e funcionárias administrem suas agendas.
 - **Perfis de acesso:** cliente, funcionária e administradora (dona).
 - **Localização de operação:** Juiz de Fora, Minas Gerais, Brasil.
@@ -14,10 +14,12 @@
 ## 2. Tecnologia e arquitetura
 
 - **Front-end:** React, com Next.js.
-- **Back-end:** JavaScript no Next.js (rotas de API / Server Actions, a definir na implementação).
+- **Back-end:** JavaScript no Next.js, com Server Actions e Route Handlers como fronteira da aplicação.
 - **Arquitetura:** MVVM: Views (páginas/componentes React), ViewModels (estado, validações e regras de apresentação) e Models (entidades, persistência e regras de domínio).
-- **Banco de dados:** PostgreSQL.
-- **Autenticação:** OAuth 2.0, JWT e cookies seguros.
+- **Banco de dados:** Supabase somente como PostgreSQL gerenciado, acessado no servidor com Drizzle e `pg` e evoluído por migrations SQL versionadas.
+- **Conexões:** `DATABASE_URL` usa Supavisor em transaction mode no runtime serverless; `DATABASE_DIRECT_URL` usa a conexão direta (ou Supavisor session mode quando IPv6 não estiver disponível) para migrations e administração controlada.
+- **Autenticação:** Auth.js com credenciais, OAuth 2.0 opcional, JWT e cookies seguros.
+- **Produtos Supabase fora do escopo:** Supabase Auth, cliente Supabase no navegador, Data API/PostgREST, Realtime, Edge Functions e Storage.
 - **Hospedagem inicial:** Vercel.
 - **Integrações:** API oficial do Google Calendar, link direto do WhatsApp (`wa.me`) e exportação para Excel.
 
@@ -193,7 +195,7 @@
 
 ## 8. Avaliação preventiva: riscos, problemas e soluções
 
-> **Estado da revisão:** no momento existe somente esta especificação na pasta do projeto. Não há código, configuração de dependências, banco ou telas para auditar. Os pontos abaixo são riscos identificados a partir dos requisitos e deverão ser revisados novamente quando a implementação existir.
+> **Estado da revisão:** a fundação Next.js e a Fase 1 de dados e contratos já existem na branch de desenvolvimento; identidade e autorização estão em andamento. Os riscos abaixo continuam sendo portões de revisão para os lotes correspondentes.
 
 | Área | Possível problema | Solução recomendada |
 |---|---|---|
@@ -203,7 +205,7 @@
 | Horário de funcionamento | "Segunda a segunda, qualquer hora" com bloqueios manuais pode tornar a agenda difícil de operar e permitir reservas indevidas quando ninguém estiver disponível. | Cadastrar uma agenda-base por funcionária e exceções/bloqueios. A administradora pode liberar horários extraordinários quando necessário. |
 | Duração e capacidade | Duração varia por serviço, cabelo e profissional; não há tempo de preparo/limpeza nem especialidades definidas. | Tornar duração, preço, intervalo de preparo e funcionárias habilitadas configuráveis por serviço. Confirmar a tabela final antes do lançamento. |
 | Google Calendar | Não está definido se haverá uma agenda geral ou uma por funcionária; falhas de sincronização podem criar divergências. | Escolher o banco do sistema como fonte de verdade, definir o modelo de agendas e registrar tentativas/erros de sincronização para reprocessamento. |
-| Banco na Vercel | A Vercel hospeda a aplicação, não substitui o PostgreSQL gerenciado; conexões sem pool podem esgotar o banco. | Selecionar um provedor PostgreSQL compatível, usar variáveis de ambiente e connection pooling apropriado ao ambiente serverless. |
+| Banco na Vercel | Conexões diretas ou pools grandes no runtime serverless podem esgotar o PostgreSQL. | Usar Supabase Supavisor transaction mode em `DATABASE_URL` com pool de aplicação pequeno; reservar `DATABASE_DIRECT_URL` para migrations, inspeção e administração controlada. |
 | Recuperação e lembretes por e-mail | O provedor de envio, domínio remetente e regras de expiração não foram definidos; mensagens podem cair em spam. | Escolher um serviço transacional, configurar domínio/remetente e SPF/DKIM/DMARC, e definir expiração do token e cronograma dos lembretes. |
 | Pagamento | Coletar dados de cartão, mesmo sem cobrar, aumenta risco de privacidade e de conformidade PCI. | Exibir apenas campos de demonstração claramente identificados; não permitir envio, armazenamento ou registro de números de cartão. Preferir bloquear a opção antes da coleta em produção. |
 | LGPD | "Dados em hash" protege somente senhas; e-mail, agenda e outros dados pessoais continuam sensíveis. | Hash para senhas; HTTPS, controle de acesso, minimização, retenção definida, política de privacidade e processo para pedidos dos titulares para os demais dados. |
@@ -221,7 +223,7 @@ O **Angelica's Beauty Salon**, situado em Juiz de Fora/MG, trata dados pessoais 
 
 **Dados coletados.** Podemos tratar nome, e-mail, senha protegida por hash, perfil de acesso, agendamentos, serviço escolhido, funcionária responsável, forma de pagamento escolhida, histórico de cancelamentos, registros de suporte e dados técnicos necessários à segurança da sessão. Não armazenamos senhas em texto puro, dados completos de cartão ou dados de pagamento PIX nesta fase.
 
-**Finalidades e compartilhamento.** Os dados são utilizados para criar e proteger a conta, exibir disponibilidade, confirmar e lembrar agendamentos, gerir a agenda do salão, atender solicitações e prevenir uso indevido. Os dados poderão ser compartilhados somente quando necessário com os operadores técnicos do serviço — hospedagem na Vercel, provedor PostgreSQL, envio de e-mail e Google Calendar quando a integração for autorizada/configurada — ou por obrigação legal. O salão não vende dados pessoais.
+**Finalidades e compartilhamento.** Os dados são utilizados para criar e proteger a conta, exibir disponibilidade, confirmar e lembrar agendamentos, gerir a agenda do salão, atender solicitações e prevenir uso indevido. Os dados poderão ser compartilhados somente quando necessário com os operadores técnicos do serviço — hospedagem na Vercel, Supabase exclusivamente como infraestrutura PostgreSQL gerenciada, envio de e-mail e Google Calendar quando a integração for autorizada/configurada — ou por obrigação legal. O salão não vende dados pessoais. A arquitetura atual não usa Supabase Auth nem envia dados de identidade por um cliente Supabase no navegador.
 
 **Segurança.** O sistema deve usar HTTPS, controles de acesso por perfil, senhas protegidas por hash forte, cookies de sessão seguros, registros de segurança e acesso limitado aos dados conforme a função de cada usuária. Nenhuma medida de segurança elimina todos os riscos; incidentes serão tratados conforme as obrigações aplicáveis.
 
@@ -259,11 +261,13 @@ Esta política deve ser revista quando houver alteração relevante das finalida
 
 ### 10.2 Protocolo de coordenação
 
-1. O arquiteto-chefe lê esta especificação, transforma requisitos em tarefas pequenas e escreve para cada subagente: objetivo, escopo, arquivos permitidos, contrato de entrada/saída, critérios de aceitação e testes exigidos.
+Subagentes são opcionais e permanecem dentro da tarefa atual do Codex. Use-os somente quando houver pelo menos duas tarefas independentes, sem arquivos compartilhados e com ganho real de tempo; trabalho pequeno, documental, sequencial ou fortemente acoplado permanece com o agente principal.
+
+1. Quando houver delegação, o arquiteto-chefe anuncia no comentário quais agentes foram iniciados, seus objetivos, arquivos permitidos e verificações exigidas.
 2. Nenhum subagente edita simultaneamente o mesmo arquivo. Quando duas tarefas dependerem do mesmo contrato, o arquiteto define a interface primeiro e libera as tarefas em sequência.
 3. O especialista de banco entrega primeiro migrations, restrições e uma descrição dos contratos de dados; o back-end consome esses contratos; o front-end consome os contratos de API/ações publicados pelo back-end.
 4. Cada subagente implementa apenas seu lote, executa testes e informa: arquivos alterados, decisões tomadas, comandos executados, resultados e riscos restantes.
-5. O arquiteto revisa a entrega contra os critérios de aceitação, resolve conflitos de integração e só então libera a próxima etapa dependente.
+5. O arquiteto revisa a entrega contra os critérios de aceitação, inspeciona o diff e repete as verificações relevantes antes de liberar a próxima etapa dependente.
 6. Tarefas repetitivas de baixo risco, como resumo de testes, inventário de arquivos e verificação de documentação, podem usar `gpt-5.6-luna`; decisões de segurança, dados e regras de agenda permanecem sob revisão do arquiteto.
 
 ### 10.3 Ondas de implementação
@@ -285,7 +289,7 @@ Esta política deve ser revista quando houver alteração relevante das finalida
 
 ## 11. Fluxos obrigatórios de skills para agentes
 
-Todo subagente receberá, junto com sua tarefa, quais skills deve usar e os critérios de saída. O arquiteto-chefe não aceitará uma entrega que pule os portões obrigatórios. A alteração deste documento é apenas uma atualização de especificação; os fluxos abaixo passam a ser obrigatórios quando o código for criado ou alterado.
+As skills são carregadas somente quando a etapa atual exigir. Os fluxos abaixo definem a ordem do ciclo de vida, não uma obrigação de ativar todas as skills no primeiro prompt. O agente lê este documento uma vez no início e depois usa buscas e trechos delimitados para recuperar contexto, evitando carregar arquivos extensos, logs, artefatos gerados ou lockfiles sem necessidade.
 
 ### 11.1 Criação ou alteração de funcionalidade
 
@@ -300,14 +304,14 @@ $brainstorming
 → $finishing-a-development-branch
 ```
 
-- `$brainstorming`: classificar o trabalho, esclarecer requisitos e obter aprovação de design antes de implementar.
-- `$writing-plans`: produzir plano com arquivos, contratos, passos de teste e critérios de aceitação antes de alterar código.
-- `$using-git-worktrees`: verificar isolamento e criar/usar worktree antes da execução do plano.
+- `$brainstorming`: usar somente quando uma decisão de comportamento ou arquitetura ainda não estiver aprovada.
+- `$writing-plans`: usar depois da aprovação para mudanças arquiteturais ou trabalhos de várias etapas.
+- `$using-git-worktrees`: verificar isolamento quando começar a execução de um plano aprovado.
 - `$test-driven-development`: escrever e executar primeiro o teste que deve falhar; só então implementar o mínimo necessário.
 - `$requesting-code-review`: solicitar revisão independente ao término de cada tarefa significativa e corrigir itens críticos/importantes.
 - `$verification-before-completion`: executar verificações atuais — testes, lint, tipos, build e requisitos — antes de declarar a tarefa concluída.
 - `$finishing-a-development-branch`: somente após a suíte verde, apresentar à administradora as opções de integração da branch; nunca excluir trabalho sem autorização explícita.
-- `$systematic-debugging`: é obrigatório sempre que houver erro, teste falho, comportamento inesperado ou problema de desempenho. O agente deve investigar e registrar a causa raiz antes de propor qualquer correção.
+- `$systematic-debugging`: carregar somente depois de ocorrer erro, teste falho, comportamento inesperado ou problema de desempenho; investigar e registrar a causa raiz antes de corrigir.
 
 ### 11.2 Criação de nova interface
 
@@ -344,8 +348,8 @@ $impeccable critique
 
 ### 11.4 Regras de coordenação das skills
 
-- O arquiteto-chefe deve declarar no início da ordem de trabalho os skills, arquivos permitidos e verificações exigidas para cada agente.
-- O agente de banco usa `$brainstorming`, `$writing-plans`, `$using-git-worktrees`, `$test-driven-development`, `$systematic-debugging`, `$requesting-code-review` e `$verification-before-completion` para schema, migrations e concorrência.
+- O arquiteto-chefe declara skills, arquivos permitidos e verificações no momento em que cada agente ou lote é iniciado, sem pré-carregar skills de fases futuras.
+- O agente de banco segue o fluxo de funcionalidade para schema, migrations e concorrência e carrega `$systematic-debugging` apenas diante de uma falha real.
 - O agente de back-end usa o fluxo de funcionalidade e adiciona testes de integração para autorização, reserva atômica, cancelamento e disponibilidade.
 - O agente de front-end usa o fluxo de funcionalidade e, para qualquer superfície nova ou revisada, o fluxo de interface correspondente.
-- Nenhum agente pode marcar uma tarefa como concluída por suposição: deve anexar os comandos executados, resultados, arquivos alterados e riscos remanescentes à entrega para revisão do arquiteto-chefe.
+- Quando houver subagentes, o arquiteto anuncia o início, informa quais concluíram e resume arquivos e evidências produzidos. Nenhum agente pode marcar uma tarefa como concluída por suposição: deve anexar comandos, resultados, arquivos alterados e riscos remanescentes.

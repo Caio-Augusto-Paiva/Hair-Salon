@@ -4,7 +4,7 @@
 
 **Goal:** Establish the JavaScript test harness, frozen shared contracts, complete initial PostgreSQL schema, migrations, fixtures, and real concurrency proof required by all later Proveras features.
 
-**Architecture:** Keep the existing Next.js App Router foundation and add server-only database modules backed by Drizzle and `pg`. Use a single `schedule_entries` collision surface with a PostgreSQL GiST exclusion constraint so appointments and blocks cannot overlap for one employee, while public contracts expose no client identity.
+**Architecture:** Keep the existing Next.js App Router foundation and add server-only database modules backed by Drizzle and `pg`. Supabase is only the managed production PostgreSQL provider: Vercel runtime traffic uses Supavisor transaction mode and migrations use the direct/session administrative connection. Use a single `schedule_entries` collision surface with a PostgreSQL GiST exclusion constraint so appointments and blocks cannot overlap for one employee, while public contracts expose no client identity.
 
 **Tech Stack:** Node.js 24, Next.js 16.3.3, JavaScript with JSDoc checking, Vitest, Zod, Drizzle ORM/Kit, node-postgres, PostgreSQL 17, Testcontainers.
 
@@ -18,6 +18,9 @@
 - Public availability may expose only employee/service query context, slot instants, availability, the exact label `Horário indisponível`, and next available start.
 - The database, not the browser or an application pre-check, is the final protection against overlapping active intervals.
 - PostgreSQL concurrency tests use a real server and may not be mocked or silently skipped.
+- `DATABASE_URL` is the bounded runtime connection through Supavisor transaction mode; runtime code must not rely on session state or named prepared statements.
+- `DATABASE_DIRECT_URL` is required for migrations, schema inspection, backup/restore, and controlled administration. Tests pass their isolated Testcontainers URL explicitly and never contact Supabase.
+- Supabase Auth, browser clients, Data API/PostgREST, Realtime, Edge Functions, and Storage remain outside the plan.
 - No `.env*` file except `.env.example`, credential, valid PIX payload, card data, or customer data may enter a commit.
 - Preserve the owner's uncommitted `INSTRUCOES_PROJETO.md` change and all root image files.
 
@@ -212,8 +215,8 @@ git commit -m "feat(web): freeze scheduling contracts"
 - Modify: `apps/web/package.json`
 
 **Interfaces:**
-- Consumes: `DATABASE_URL` and optional `DATABASE_POOL_MAX`.
-- Produces: `createDatabasePool(connectionString, options)`, `db`, `pool`, `runMigrations(connectionString)`, and a real PostgreSQL test lifecycle.
+- Consumes: runtime `DATABASE_URL`, migration/administration `DATABASE_DIRECT_URL`, and optional `DATABASE_POOL_MAX`; integration tests provide an explicit isolated connection string.
+- Produces: `createDatabasePool(connectionString, options)`, `db`, `pool`, `runMigrations(connectionString)`, and a real PostgreSQL test lifecycle without contacting Supabase in tests.
 
 - [ ] **Step 1: Write the failing real-database migration test**
 
@@ -231,14 +234,14 @@ Expected: the container starts, then the test fails on the missing migration API
 
 - [ ] **Step 3: Implement connection and migration boundaries**
 
-Create a bounded `pg.Pool` at module scope, attach Drizzle to it, and prevent accidental browser imports with `server-only`. `runMigrations` constructs an isolated pool, calls Drizzle's migrator with `migrationsFolder: "drizzle"`, and closes the pool in `finally`. The first migration enables `btree_gist` and `pgcrypto`; the journal records that migration.
+Create a bounded `pg.Pool` at module scope from `DATABASE_URL`, attach Drizzle to it, and prevent accidental browser imports with `server-only`. Do not configure named prepared statements or rely on session state. `runMigrations` accepts an explicit connection string for Testcontainers; the CLI entry point requires `DATABASE_DIRECT_URL`, constructs an isolated pool, calls Drizzle's migrator with `migrationsFolder: "drizzle"`, and closes the pool in `finally`. The first migration enables `btree_gist` and `pgcrypto`; the journal records that migration. Migrations never run during an application request or module import.
 
 Add scripts:
 
 ```json
 {
   "db:generate": "drizzle-kit generate",
-  "db:migrate": "node src/db/migrate.js",
+  "db:migrate": "node --conditions react-server src/db/migrate.js",
   "db:check": "drizzle-kit check"
 }
 ```
@@ -409,7 +412,7 @@ Run the focused integration test. Expected: FAIL because seed modules do not exi
 
 Use only reserved example addresses such as `cliente@example.com`. Mark display names and prices as fictitious. Hash any test-only password at execution time rather than storing a password or hash in the repository. Do not run the seed automatically in production.
 
-Add `db:seed:development` and configuration names for `DATABASE_URL`, `DATABASE_POOL_MAX`, and `DEVELOPMENT_SEED_ENABLED` to `.env.example` without values.
+Add `db:seed:development` and configuration names for `DATABASE_URL`, `DATABASE_DIRECT_URL`, `DATABASE_POOL_MAX`, and `DEVELOPMENT_SEED_ENABLED` to `.env.example` without values. Document the runtime/direct split; never seed production or run the development seed implicitly.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -441,4 +444,4 @@ npm run db:check
 git diff --check
 ```
 
-Required evidence is a real PostgreSQL 17 process, zero skipped concurrency tests, exact constraint inspection, clean secret scan, and no staged or committed change to `INSTRUCOES_PROJETO.md`.
+Required evidence is a real isolated PostgreSQL 17 process, zero skipped concurrency tests, exact constraint inspection, clean secret scan, and confirmation that tests did not contact Supabase. The separately requested operational-documentation update may change `INSTRUCOES_PROJETO.md`; Phase 1 production-code commits must not absorb unrelated owner edits.
