@@ -227,6 +227,22 @@ describe("PostgreSQL migration lifecycle", () => {
       expect(normalizeDefinition(authRateLimitExpiryIndex.rows[0].definition)).toBe(
         "createindexauth_rate_limits_expiry_idxonpublic.auth_rate_limitsusingbtreeblocked_until",
       );
+
+      const schedulingLocking = await verificationPool.query(
+        `select pg_get_functiondef(
+                  'ensure_schedule_entry_has_one_detail()'::regprocedure
+                ) as detail_function,
+                exists (
+                  select 1
+                    from pg_trigger
+                   where tgrelid = 'public.schedule_entries'::regclass
+                     and tgname = 'schedule_entries_serialize_active_write'
+                     and not tgisinternal
+                ) as serialization_trigger`,
+      );
+      expect(schedulingLocking.rows[0].detail_function).toMatch(/FOR NO KEY UPDATE/iu);
+      expect(schedulingLocking.rows[0].detail_function).not.toMatch(/FOR UPDATE/iu);
+      expect(schedulingLocking.rows[0].serialization_trigger).toBe(true);
     } finally {
       await stopTestDatabase(testDatabase);
     }

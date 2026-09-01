@@ -29,10 +29,11 @@ describe("real PostgreSQL authentication rate limits", () => {
       const { consumeAuthAttempt, deriveAuthBucket } = await import("./rate-limit-repository.js");
       await runMigrations(database.connectionString);
 
+      const networkAttribute = `network:v1:${"a".repeat(64)}`;
       const bucketKey = deriveAuthBucket({
         purpose: "login",
         emailNormalized: "race@example.test",
-        networkAttribute: `network:v1:${"a".repeat(64)}`,
+        networkAttribute,
         secret: "dedicated-test-rate-limit-secret",
       });
       const now = new Date("2040-01-01T00:00:00.000Z");
@@ -70,7 +71,8 @@ describe("real PostgreSQL authentication rate limits", () => {
       );
       expect(stored.rows).toHaveLength(1);
       expect(stored.rows[0]).toMatchObject({ bucket_key: bucketKey, attempts: 4 });
-      expect(JSON.stringify(stored.rows[0])).not.toMatch(/race@example|network-prefix/iu);
+      expect(JSON.stringify(stored.rows[0])).not.toMatch(/race@example/iu);
+      expect(JSON.stringify(stored.rows[0])).not.toContain(networkAttribute);
     } finally {
       await racePool.end();
       await stopTestDatabase(database);
@@ -114,7 +116,8 @@ describe("real PostgreSQL authentication rate limits", () => {
         allowed: false,
         blockedUntil: new Date("2040-01-01T00:00:02.500Z"),
       });
-      expect(JSON.stringify(blocked)).not.toMatch(/separate@example|network-prefix|bucket/iu);
+      expect(JSON.stringify(blocked)).not.toMatch(/separate@example|bucket/iu);
+      expect(JSON.stringify(blocked)).not.toContain(identity.networkAttribute);
 
       const stillBlocked = await consumeAuthAttempt(database.pool, {
         bucketKey: loginBucket,
