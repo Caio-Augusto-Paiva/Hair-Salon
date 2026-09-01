@@ -18,9 +18,13 @@ const { migrate } = require(migratorPackage);
  * @param {Record<string, any>} [options]
  */
 export async function runMigrations(
-  connectionString = process.env.DATABASE_URL,
+  connectionString = process.env.DATABASE_DIRECT_URL,
   options = {},
 ) {
+  if (!connectionString) {
+    throw new Error("DATABASE_DIRECT_URL is required to run migrations");
+  }
+
   const poolFactory = options.createPool ?? createDatabasePool;
   const drizzleFactory = options.createDrizzle ?? drizzle;
   const migrationRunner = options.migrator ?? options.migrate ?? migrate;

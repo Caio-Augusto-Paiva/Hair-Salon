@@ -38,6 +38,60 @@ describe("migration runner", () => {
     ]);
   });
 
+  it("uses DATABASE_DIRECT_URL when no explicit migration connection is provided", async () => {
+    const originalRuntimeUrl = process.env.DATABASE_URL;
+    const originalDirectUrl = process.env.DATABASE_DIRECT_URL;
+    /** @type {Array<string | undefined>} */
+    const observedConnections = [];
+    const pool = { end: async () => {} };
+
+    try {
+      process.env.DATABASE_URL = "postgresql://runtime.example.test/proveras";
+      process.env.DATABASE_DIRECT_URL = "postgresql://direct.example.test/proveras";
+      const { runMigrations } = await import("./migrate.js");
+
+      await runMigrations(undefined, {
+        createPool: (/** @type {string | undefined} */ connectionString) => {
+          observedConnections.push(connectionString);
+          return pool;
+        },
+        createDrizzle: () => ({ name: "database" }),
+        migrator: async () => {},
+      });
+
+      expect(observedConnections).toEqual([
+        "postgresql://direct.example.test/proveras",
+      ]);
+    } finally {
+      if (originalRuntimeUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalRuntimeUrl;
+      if (originalDirectUrl === undefined) delete process.env.DATABASE_DIRECT_URL;
+      else process.env.DATABASE_DIRECT_URL = originalDirectUrl;
+    }
+  });
+
+  it("rejects an implicit migration when DATABASE_DIRECT_URL is missing", async () => {
+    const originalRuntimeUrl = process.env.DATABASE_URL;
+    const originalDirectUrl = process.env.DATABASE_DIRECT_URL;
+
+    try {
+      process.env.DATABASE_URL = "postgresql://runtime.example.test/proveras";
+      delete process.env.DATABASE_DIRECT_URL;
+      const { runMigrations } = await import("./migrate.js");
+
+      await expect(runMigrations(undefined, {
+        createPool: () => ({ end: async () => {} }),
+        createDrizzle: () => ({ name: "database" }),
+        migrator: async () => {},
+      })).rejects.toThrow("DATABASE_DIRECT_URL is required to run migrations");
+    } finally {
+      if (originalRuntimeUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = originalRuntimeUrl;
+      if (originalDirectUrl === undefined) delete process.env.DATABASE_DIRECT_URL;
+      else process.env.DATABASE_DIRECT_URL = originalDirectUrl;
+    }
+  });
+
   it("closes its isolated pool and rethrows when migration fails", async () => {
     let ended = false;
     const pool = {
